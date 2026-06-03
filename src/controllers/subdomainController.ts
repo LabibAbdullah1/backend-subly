@@ -5,6 +5,7 @@ import { CreateSubdomainSchema } from '../validator/subdomain.js';
 import { provisionSubdomain } from '../services/provisioningService.js';
 import { encryptString } from '../utils/crypto.js';
 import { serializeBigInt } from '../utils/serialize.js';
+import { getBaseDirectory, getDirectorySize } from '../services/fileManagerService.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -167,6 +168,134 @@ export async function claimSubdomain(req: AuthenticatedRequest, res: Response) {
     return res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan server saat memproses klaim subdomain.',
+      error: error.message
+    });
+  }
+}
+
+export async function getSubdomainDiskUsage(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: {
+        id: BigInt(subdomainId),
+        userId: userId,
+        deletedAt: null
+      },
+      include: {
+        databases: {
+          where: { deletedAt: null }
+        },
+        payments: {
+          where: { status: 'success' },
+          include: { plan: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        }
+      }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Subdomain tidak ditemukan atau bukan milik Anda.'
+      });
+    }
+
+    // Ambil plan terasosiasi via pembayaran sukses terakhir, atau cari plan pertama sebagai fallback
+    let plan: any = subdomain.payments[0]?.plan;
+    if (!plan) {
+      plan = await prisma.plan.findFirst({
+        where: { isActive: true }
+      });
+    }
+
+    if (!plan) {
+      return res.status(500).json({
+        status: 'error',
+        message: 'Paket langganan (plan) tidak tersedia di sistem.'
+      });
+    }
+
+    // A. Hitung Storage File Manager (Filesystem)
+    const baseDir = getBaseDirectory(subdomain.docRoot);
+    const filesUsedBytes = getDirectorySize(baseDir);
+    const limitMb = subdomain.storageOverrideMb || plan.maxStorageMb;
+    const limitBytes = limitMb * 1024 * 1024;
+    const filesUsedMb = parseFloat((filesUsedBytes / 1024 / 1024).toFixed(2));
+    const filesRemainingBytes = Math.max(0, limitBytes - filesUsedBytes);
+    const filesRemainingMb = parseFloat((filesRemainingBytes / 1024 / 1024).toFixed(2));
+    const filesPercentage = parseFloat(((filesUsedBytes / limitBytes) * 100).toFixed(2));
+
+    // B. Hitung Ukuran Database MySQL
+    let dbUsedBytes = 0;
+    const databaseDetails = [];
+
+    for (const db of subdomain.databases) {
+      try {
+        const queryRes = await prisma.$queryRawUnsafe<any[]>(
+          `SELECT SUM(data_length + index_length) AS size_bytes 
+           FROM information_schema.TABLES 
+           WHERE table_schema = ?`,
+          db.dbName
+        );
+        const bytes = queryRes[0]?.size_bytes ? Number(queryRes[0].size_bytes) : 0;
+        dbUsedBytes += bytes;
+        databaseDetails.push({
+          dbName: db.dbName,
+          usedBytes: bytes,
+          usedMb: parseFloat((bytes / 1024 / 1024).toFixed(2))
+        });
+      } catch (err: any) {
+        databaseDetails.push({
+          dbName: db.dbName,
+          usedBytes: 0,
+          usedMb: 0,
+          error: `Gagal membaca ukuran database: ${err.message}`
+        });
+      }
+    }
+
+    const dbUsedMb = parseFloat((dbUsedBytes / 1024 / 1024).toFixed(2));
+
+    // C. Hitung Total Gabungan
+    const totalUsedBytes = filesUsedBytes + dbUsedBytes;
+    const totalUsedMb = parseFloat((totalUsedBytes / 1024 / 1024).toFixed(2));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        subdomainId: subdomain.id.toString(),
+        subdomainName: subdomain.name,
+        storage: {
+          usedBytes: filesUsedBytes,
+          usedMb: filesUsedMb,
+          limitMb,
+          limitBytes,
+          remainingBytes: filesRemainingBytes,
+          remainingMb: filesRemainingMb,
+          percentage: filesPercentage
+        },
+        database: {
+          usedBytes: dbUsedBytes,
+          usedMb: dbUsedMb,
+          databases: databaseDetails
+        },
+        totalUsedBytes,
+        totalUsedMb
+      }
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat menghitung penggunaan penyimpanan.',
       error: error.message
     });
   }

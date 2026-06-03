@@ -54,3 +54,24 @@ export function formatBytes(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
+
+export function getDirectorySize(dirPath: string): number {
+  let totalSize = 0;
+  if (!fs.existsSync(dirPath)) return 0;
+  
+  try {
+    const files = fs.readdirSync(dirPath);
+    for (const file of files) {
+      const filePath = path.join(dirPath, file);
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        totalSize += getDirectorySize(filePath);
+      } else {
+        totalSize += stat.size;
+      }
+    }
+  } catch (err) {
+    // Ignore folder read errors
+  }
+  return totalSize;
+}

@@ -2,3 +2,6 @@
 node_modules
 dist
 .vscode
+migrations/*
+uploads/*
+REVERSE_ENGINEERING_AND_MIGRATION_BLUEPRINT.md

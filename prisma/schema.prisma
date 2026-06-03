@@ -1,0 +1,232 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  Admin
+  Client
+}
+
+enum SubdomainStatus {
+  active
+  inactive
+  suspended
+  expired
+}
+
+enum PaymentStatus {
+  pending
+  success
+  failed
+}
+
+enum DeploymentStatus {
+  queued
+  processing
+  success
+  error
+}
+
+enum ReportStatus {
+  open
+  in_progress
+  resolved
+}
+
+enum VoucherType {
+  fixed
+  percent
+}
+
+model User {
+  id              BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  name            String       @db.VarChar(255)
+  email           String       @unique @db.VarChar(255)
+  emailVerifiedAt DateTime?    @map("email_verified_at")
+  password        String       @db.VarChar(255)
+  role            Role         @default(Client)
+  rememberToken   String?      @map("remember_token") @db.VarChar(100)
+  lastSeenAt      DateTime?    @map("last_seen_at")
+  createdAt       DateTime?    @default(now()) @map("created_at")
+  updatedAt       DateTime?    @updatedAt @map("updated_at")
+  deletedAt       DateTime?    @map("deleted_at")
+  subdomains      Subdomain[]
+  payments        Payment[]
+  chats           Chat[]
+  reports         Report[]
+
+  @@map("users")
+}
+
+model Plan {
+  id             BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  name           String    @db.VarChar(255)
+  type           String    @default("PHP") @db.VarChar(255)
+  isActive       Boolean   @default(false) @map("is_active") @db.TinyInt
+  price          BigInt    @db.UnsignedBigInt
+  durationMonths Int       @map("duration_months") @db.Int
+  maxStorageMb   Int       @map("max_storage_mb") @db.Int
+  maxDatabases   Int       @map("max_databases") @db.Int
+  description    String?   @db.Text
+  createdAt      DateTime? @default(now()) @map("created_at")
+  updatedAt      DateTime? @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+  payments       Payment[]
+
+  @@map("plans")
+}
+
+model Subdomain {
+  id                BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  userId            BigInt          @map("user_id") @db.UnsignedBigInt
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String          @db.VarChar(255)
+  fullDomain        String          @map("full_domain") @db.VarChar(255)
+  docRoot           String          @map("doc_root") @db.VarChar(255)
+  status            SubdomainStatus @default(active)
+  storageOverrideMb Int?            @map("storage_override_mb") @db.UnsignedInt
+  gitUrl            String?         @map("git_url") @db.VarChar(255)
+  gitBranch         String?         @map("git_branch") @db.VarChar(255)
+  gitToken          String?         @map("git_token") @db.Text
+  gitLastCommit     String?         @map("git_last_commit") @db.VarChar(255)
+  gitConnectedAt    DateTime?       @map("git_connected_at")
+  nodejsVersion     String          @default("20") @map("nodejs_version") @db.VarChar(255)
+  nodejsStartupFile String          @default("server.js") @map("nodejs_startup_file") @db.VarChar(255)
+  nodejsMode        String          @default("production") @map("nodejs_mode") @db.VarChar(255)
+  expiredAt         DateTime?       @map("expired_at")
+  createdAt         DateTime?       @default(now()) @map("created_at")
+  updatedAt         DateTime?       @updatedAt @map("updated_at")
+  deletedAt         DateTime?       @map("deleted_at")
+  envs              SubdomainEnv[]
+  databases         UserDatabase[]
+  deployments       Deployment[]
+  payments          Payment[]
+
+  @@map("subdomains")
+}
+
+model SubdomainEnv {
+  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  subdomainId BigInt    @map("subdomain_id") @db.UnsignedBigInt
+  subdomain   Subdomain @relation(fields: [subdomainId], references: [id], onDelete: Cascade)
+  key         String    @db.VarChar(255)
+  value       String    @db.Text
+  isSecret    Boolean   @default(true) @map("is_secret") @db.TinyInt
+  createdAt   DateTime? @default(now()) @map("created_at")
+  updatedAt   DateTime? @updatedAt @map("updated_at")
+
+  @@map("subdomain_envs")
+}
+
+model UserDatabase {
+  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  subdomainId BigInt    @map("subdomain_id") @db.UnsignedBigInt
+  subdomain   Subdomain @relation(fields: [subdomainId], references: [id], onDelete: Cascade)
+  dbName      String    @map("db_name") @db.VarChar(255)
+  dbUser      String    @map("db_user") @db.VarChar(255)
+  dbPassword  String    @map("db_password") @db.VarChar(255)
+  createdAt   DateTime? @default(now()) @map("created_at")
+  updatedAt   DateTime? @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@map("user_databases")
+}
+
+model Payment {
+  id            BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  userId        BigInt        @map("user_id") @db.UnsignedBigInt
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId        BigInt        @map("plan_id") @db.UnsignedBigInt
+  plan          Plan          @relation(fields: [planId], references: [id], onDelete: Cascade)
+  voucherId     BigInt?       @map("voucher_id") @db.UnsignedBigInt
+  voucher       Voucher?      @relation(fields: [voucherId], references: [id])
+  subdomainId   BigInt?       @map("subdomain_id") @db.UnsignedBigInt
+  subdomain     Subdomain?    @relation(fields: [subdomainId], references: [id])
+  transactionId String?       @map("transaction_id") @db.VarChar(255)
+  snapToken     String?       @map("snap_token") @db.VarChar(255)
+  amount        BigInt        @db.UnsignedBigInt
+  uniqueCode    Int?          @map("unique_code") @db.Int
+  proofPath     String?       @map("proof_path") @db.VarChar(255)
+  status        PaymentStatus @default(pending)
+  createdAt     DateTime?     @default(now()) @map("created_at")
+  updatedAt     DateTime?     @updatedAt @map("updated_at")
+  deletedAt     DateTime?     @map("deleted_at")
+
+  @@map("payments")
+}
+
+model Deployment {
+  id            BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  subdomainId   BigInt           @map("subdomain_id") @db.UnsignedBigInt
+  subdomain     Subdomain        @relation(fields: [subdomainId], references: [id], onDelete: Cascade)
+  zipPath       String           @map("zip_path") @db.VarChar(255)
+  zipSize       BigInt           @default(0) @map("zip_size") @db.UnsignedBigInt
+  extractedSize BigInt           @default(0) @map("extracted_size") @db.UnsignedBigInt
+  version       Int              @default(1) @db.Int
+  status        DeploymentStatus @default(queued)
+  notes         String?          @db.VarChar(255)
+  adminNote     String?          @map("admin_note") @db.Text
+  deployedAt    DateTime?        @map("deployed_at")
+  createdAt     DateTime?        @default(now()) @map("created_at")
+  updatedAt     DateTime?        @updatedAt @map("updated_at")
+  deletedAt     DateTime?        @map("deleted_at")
+
+  @@map("deployments")
+}
+
+model Voucher {
+  id           BigInt      @id @default(autoincrement()) @db.UnsignedBigInt
+  code         String      @unique @db.VarChar(255)
+  type         VoucherType
+  rewardAmount Decimal     @map("reward_amount") @db.Decimal(10, 2)
+  usageLimit   Int?        @map("usage_limit") @db.Int
+  expiresAt    DateTime?   @map("expires_at")
+  createdAt    DateTime?   @default(now()) @map("created_at")
+  updatedAt    DateTime?   @updatedAt @map("updated_at")
+  payments     Payment[]
+
+  @@map("vouchers")
+}
+
+model Chat {
+  id        BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  userId    BigInt    @map("user_id") @db.UnsignedBigInt
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isAdmin   Boolean   @default(false) @map("is_admin") @db.TinyInt
+  message   String    @db.Text
+  imagePath String?   @map("image_path") @db.VarChar(255)
+  isRead    Boolean   @default(false) @map("is_read") @db.TinyInt
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  @@map("chats")
+}
+
+model Report {
+  id        BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  userId    BigInt       @map("user_id") @db.UnsignedBigInt
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   String       @db.VarChar(255)
+  message   String       @db.Text
+  status    ReportStatus @default(open)
+  createdAt DateTime?    @default(now()) @map("created_at")
+  updatedAt DateTime?    @updatedAt @map("updated_at")
+  deletedAt DateTime?    @map("deleted_at")
+
+  @@map("reports")
+}
+
+model Setting {
+  id        BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  key       String    @unique @db.VarChar(255)
+  value     String?   @db.Text
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  @@map("settings")
+}

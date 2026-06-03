@@ -5,6 +5,8 @@ import { signToken, verifyToken } from '../utils/jwt.js';
 import { LoginSchema, RegisterSchema, ForgotPasswordSchema, ResetPasswordSchema } from '../validator/auth.js';
 import { sendVerificationEmail, sendResetPasswordEmail } from '../services/emailService.js';
 import crypto from 'crypto';
+import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
+import { serializeBigInt } from '../utils/serialize.js';
 
 export async function register(req: Request, res: Response) {
   // Validate request body
@@ -311,3 +313,76 @@ export async function resetPassword(req: Request, res: Response) {
     });
   }
 }
+
+export async function getMe(req: AuthenticatedRequest, res: Response) {
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: BigInt(userId) },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        emailVerifiedAt: true,
+        lastSeenAt: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ status: 'error', message: 'User tidak ditemukan.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: serializeBigInt(user)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil data profile.',
+      error: error.message
+    });
+  }
+}
+
+export async function getAllUsers(req: Request, res: Response) {
+  try {
+    const users = await prisma.user.findMany({
+      where: { deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        emailVerifiedAt: true,
+        createdAt: true,
+        subdomains: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: serializeBigInt(users)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil daftar user.',
+      error: error.message
+    });
+  }
+}
+

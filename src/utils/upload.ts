@@ -22,11 +22,11 @@ const storage = multer.diskStorage({
 
 // File Filter untuk membatasi tipe berkas
 const fileFilter = (req: any, file: any, cb: any) => {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg'];
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Format file tidak didukung. Hanya gambar (JPG, JPEG, PNG) yang diperbolehkan.'), false);
+    cb(new Error('Format file tidak didukung. Hanya gambar (JPG, JPEG, PNG, WEBP) yang diperbolehkan.'), false);
   }
 };
 

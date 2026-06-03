@@ -127,3 +127,33 @@ export async function createVoucher(req: Request, res: Response) {
     });
   }
 }
+
+export async function deleteVoucher(req: Request, res: Response) {
+  const { id } = req.params;
+
+  try {
+    const voucher = await prisma.voucher.findUnique({
+      where: { id: BigInt(id) }
+    });
+
+    if (!voucher) {
+      return res.status(404).json({ status: 'error', message: 'Voucher tidak ditemukan.' });
+    }
+
+    await prisma.voucher.delete({
+      where: { id: voucher.id }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Voucher berhasil dihapus.'
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal menghapus voucher.',
+      error: error.message
+    });
+  }
+}
+

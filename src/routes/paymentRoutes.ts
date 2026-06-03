@@ -4,11 +4,13 @@ import { uploadProof } from '../utils/upload.js';
 import {
   checkout,
   uploadProofFile,
-  confirmPayment
+  confirmPayment,
+  getPayments
 } from '../controllers/paymentController.js';
 
 const router = Router();
 
+router.get('/payments', authenticateJWT, getPayments);
 router.post('/payments/checkout', authenticateJWT, checkout);
 router.post(
   '/payments/:id/proof',

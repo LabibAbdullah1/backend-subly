@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { authenticateJWT } from '../middleware/authMiddleware.js';
-import { uploadChunk, checkGitRepository, connectGit } from '../controllers/deploymentController.js';
+import { uploadChunk, checkGitRepository, connectGit, triggerSubdomainDeploy } from '../controllers/deploymentController.js';
 
 const router = Router();
 
@@ -37,5 +37,6 @@ router.post('/deployments/upload-chunk', authenticateJWT, uploadChunkMulter.sing
 // Rute GitHub Integration
 router.post('/subdomains/git/check-repository', authenticateJWT, checkGitRepository);
 router.post('/subdomains/:id/git/connect', authenticateJWT, connectGit);
+router.post('/subdomains/:id/deploy', authenticateJWT, triggerSubdomainDeploy);
 
 export default router;

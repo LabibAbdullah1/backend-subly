@@ -325,3 +325,39 @@ export async function confirmPayment(req: AuthenticatedRequest, res: Response) {
     });
   }
 }
+
+export async function getPayments(req: AuthenticatedRequest, res: Response) {
+  const userId = req.user?.id;
+  const role = req.user?.role;
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    let payments;
+    if (role === 'Admin') {
+      payments = await prisma.payment.findMany({
+        where: { deletedAt: null },
+        include: { plan: true, user: true, subdomain: true },
+        orderBy: { createdAt: 'desc' }
+      });
+    } else {
+      payments = await prisma.payment.findMany({
+        where: { userId: BigInt(userId), deletedAt: null },
+        include: { plan: true, subdomain: true },
+        orderBy: { createdAt: 'desc' }
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: serializeBigInt(payments)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil data transaksi.',
+      error: error.message
+    });
+  }
+}

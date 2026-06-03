@@ -3,7 +3,7 @@ import prisma from '../config/db.js';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { CreateSubdomainSchema } from '../validator/subdomain.js';
 import { provisionSubdomain } from '../services/provisioningService.js';
-import { encryptString } from '../utils/crypto.js';
+import { encryptString, decryptString } from '../utils/crypto.js';
 import { serializeBigInt } from '../utils/serialize.js';
 import { getBaseDirectory, getDirectorySize } from '../services/fileManagerService.js';
 import dotenv from 'dotenv';
@@ -300,3 +300,208 @@ export async function getSubdomainDiskUsage(req: AuthenticatedRequest, res: Resp
     });
   }
 }
+
+export async function getUserSubdomains(req: AuthenticatedRequest, res: Response) {
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    const subdomains = await prisma.subdomain.findMany({
+      where: {
+        userId: BigInt(userId),
+        deletedAt: null
+      },
+      include: {
+        databases: {
+          where: { deletedAt: null }
+        },
+        envs: true,
+        deployments: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'desc' }
+        }
+      }
+    });
+
+    const decryptedSubdomains = subdomains.map((sub) => {
+      const decryptedDatabases = sub.databases.map((db) => {
+        let plainPassword = db.dbPassword;
+        if (db.dbPassword) {
+          try {
+            plainPassword = decryptString(db.dbPassword);
+          } catch (err) {
+            console.error(`Failed to decrypt password for database ${db.dbName}:`, err);
+          }
+        }
+        return {
+          ...db,
+          dbPassword: plainPassword
+        };
+      });
+
+      return {
+        ...sub,
+        databases: decryptedDatabases
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: serializeBigInt(decryptedSubdomains)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil daftar subdomain.',
+      error: error.message
+    });
+  }
+}
+
+export async function deleteSubdomain(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: {
+        id: BigInt(subdomainId),
+        userId: BigInt(userId),
+        deletedAt: null
+      }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Subdomain tidak ditemukan atau bukan milik Anda.'
+      });
+    }
+
+    // Soft-delete subdomain
+    await prisma.subdomain.update({
+      where: { id: subdomain.id },
+      data: {
+        deletedAt: new Date(),
+        status: 'inactive'
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Subdomain berhasil dihapus.'
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat menghapus subdomain.',
+      error: error.message
+    });
+  }
+}
+
+export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
+  try {
+    const totalUsers = await prisma.user.count({ where: { deletedAt: null } });
+    const totalSubdomains = await prisma.subdomain.count({ where: { deletedAt: null } });
+    const totalDatabases = await prisma.userDatabase.count({ where: { deletedAt: null } });
+    const activeQueueJobs = await prisma.deployment.count({ where: { status: 'queued', deletedAt: null } });
+
+    const subdomainsList = await prisma.subdomain.findMany({
+      where: { deletedAt: null }
+    });
+
+    let overallUsedBytes = 0;
+    const consumers = [];
+
+    for (const sub of subdomainsList) {
+      try {
+        const baseDir = getBaseDirectory(sub.docRoot);
+        const sizeBytes = getDirectorySize(baseDir);
+        overallUsedBytes += sizeBytes;
+        consumers.push({
+          name: `${sub.name}.subly.host`,
+          usedBytes: sizeBytes,
+          usedMb: parseFloat((sizeBytes / 1024 / 1024).toFixed(2))
+        });
+      } catch (err) {
+        consumers.push({
+          name: `${sub.name}.subly.host`,
+          usedBytes: 0,
+          usedMb: 0
+        });
+      }
+    }
+
+    consumers.sort((a, b) => b.usedBytes - a.usedBytes);
+    const topConsumers = consumers.slice(0, 5);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        totalUsers,
+        totalSubdomains,
+        totalDatabases,
+        activeQueueJobs,
+        storage: {
+          usedBytes: overallUsedBytes,
+          usedMb: parseFloat((overallUsedBytes / 1024 / 1024).toFixed(2)),
+          limitGb: 256
+        },
+        topConsumers
+      }
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil stats admin.',
+      error: error.message
+    });
+  }
+}
+
+export async function updateStorageOverride(req: AuthenticatedRequest, res: Response) {
+  const { id } = req.params;
+  const { storageOverrideMb } = req.body;
+
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(id), deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Subdomain tidak ditemukan.'
+      });
+    }
+
+    const updatedSubdomain = await prisma.subdomain.update({
+      where: { id: subdomain.id },
+      data: {
+        storageOverrideMb: storageOverrideMb ? parseInt(storageOverrideMb.toString(), 10) : null
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Batas storage berhasil diperbarui.',
+      data: serializeBigInt(updatedSubdomain)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal memperbarui storage limit.',
+      error: error.message
+    });
+  }
+}
+
+

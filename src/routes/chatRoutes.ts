@@ -25,13 +25,13 @@ const storage = multer.diskStorage({
   }
 });
 
-// Hanya izinkan gambar JPG, JPEG, PNG
+// Hanya izinkan gambar JPG, JPEG, PNG, WEBP
 const fileFilter = (req: any, file: any, cb: any) => {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg'];
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Format file tidak didukung. Hanya gambar (JPG, JPEG, PNG) yang diperbolehkan untuk lampiran chat.'), false);
+    cb(new Error('Format file tidak didukung. Hanya gambar (JPG, JPEG, PNG, WEBP) yang diperbolehkan untuk lampiran chat.'), false);
   }
 };
 

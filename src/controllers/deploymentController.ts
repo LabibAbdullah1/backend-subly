@@ -231,3 +231,79 @@ export async function connectGit(req: AuthenticatedRequest, res: Response) {
     });
   }
 }
+
+export async function triggerSubdomainDeploy(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: {
+        id: BigInt(subdomainId),
+        userId: userId,
+        deletedAt: null
+      }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Subdomain tidak ditemukan atau bukan milik Anda.'
+      });
+    }
+
+    if (!subdomain.gitUrl) {
+      const lastDeployment = await prisma.deployment.findFirst({
+        where: { subdomainId: subdomain.id },
+        orderBy: { version: 'desc' }
+      });
+
+      const nextVersion = lastDeployment ? lastDeployment.version + 1 : 1;
+      const deployment = await prisma.deployment.create({
+        data: {
+          subdomainId: subdomain.id,
+          zipPath: lastDeployment?.zipPath || 'manual_trigger',
+          zipSize: lastDeployment?.zipSize || BigInt(0),
+          extractedSize: lastDeployment?.extractedSize || BigInt(0),
+          version: nextVersion,
+          status: 'success',
+          notes: `Manual Redeploy (ZIP) v${nextVersion}`,
+          deployedAt: new Date()
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Redeploy manual berhasil.',
+        data: serializeBigInt(deployment)
+      });
+    }
+
+    const decryptedToken = subdomain.gitToken ? decryptString(subdomain.gitToken) : null;
+    const deployment = await deployFromGit({
+      subdomainId: subdomain.id,
+      gitUrl: subdomain.gitUrl,
+      branch: subdomain.gitBranch || 'main',
+      token: decryptedToken,
+      notes: `Manual Git Redeploy - Branch: ${subdomain.gitBranch}`
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Redeploy manual dari Git berhasil.',
+      data: serializeBigInt(deployment)
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal melakukan redeploy manual.',
+      error: error.message
+    });
+  }
+}
+

@@ -11,16 +11,18 @@ interface JwtPayload {
   role: string;
 }
 
-export function signToken(payload: JwtPayload): string {
+export function signToken(payload: JwtPayload, options?: jwt.SignOptions): string {
   return jwt.sign(payload, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN as any,
+    ...options
   });
 }
 
-export function verifyToken(token: string): JwtPayload | null {
+export function verifyToken(token: string): { decoded: JwtPayload | null; error: string | null } {
   try {
-    return jwt.verify(token, JWT_SECRET) as JwtPayload;
-  } catch (error) {
-    return null;
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    return { decoded, error: null };
+  } catch (error: any) {
+    return { decoded: null, error: error.message };
   }
 }

@@ -27,3 +27,26 @@ export const LoginSchema = z.object({
     .min(1, 'Password wajib diisi'),
   remember: z.boolean().optional()
 });
+
+export const ForgotPasswordSchema = z.object({
+  email: z.string()
+    .min(1, 'Email wajib diisi')
+    .email('Format email tidak valid')
+    .toLowerCase()
+});
+
+export const ResetPasswordSchema = z.object({
+  email: z.string()
+    .min(1, 'Email wajib diisi')
+    .email('Format email tidak valid')
+    .toLowerCase(),
+  token: z.string()
+    .min(1, 'Token reset password wajib diisi'),
+  password: z.string()
+    .min(8, 'Password minimal 8 karakter'),
+  password_confirmation: z.string()
+    .min(1, 'Konfirmasi password wajib diisi')
+}).refine((data) => data.password === data.password_confirmation, {
+  message: "Konfirmasi password tidak cocok",
+  path: ["password_confirmation"],
+});

@@ -1,9 +1,19 @@
-import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import express from 'express';
+import path from 'path';
 import prisma from './config/db.js';
-import authRoutes from './api/routes/authRoutes.js';
-import { authenticateJWT, AuthenticatedRequest } from './middleware/authMiddleware.js';
+import { AuthenticatedRequest, authenticateJWT } from './middleware/authMiddleware.js';
+import authRoutes from './routes/authRoutes.js';
+import planRoutes from './routes/planRoutes.js';
+import voucherRoutes from './routes/voucherRoutes.js';
+import paymentRoutes from './routes/paymentRoutes.js';
+import subdomainRoutes from './routes/subdomainRoutes.js';
+import deploymentRoutes from './routes/deploymentRoutes.js';
+import envRoutes from './routes/envRoutes.js';
+import fileManagerRoutes from './routes/fileManagerRoutes.js';
+import chatRoutes from './routes/chatRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -15,8 +25,20 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+// Serve folder uploads secara statis agar bukti transfer bisa diakses/diunduh
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api', planRoutes);
+app.use('/api', voucherRoutes);
+app.use('/api', paymentRoutes);
+app.use('/api', subdomainRoutes);
+app.use('/api', deploymentRoutes);
+app.use('/api', envRoutes);
+app.use('/api', fileManagerRoutes);
+app.use('/api', chatRoutes);
+app.use('/api', reportRoutes);
 
 // Basic welcome route
 app.get('/', (req, res) => {
@@ -45,7 +67,7 @@ app.get('/api/health', async (req, res) => {
   try {
     // Run simple query to check database connection
     await prisma.$queryRaw`SELECT 1`;
-    
+
     res.status(200).json({
       status: 'success',
       message: 'Server is healthy and database is connected',
@@ -61,8 +83,16 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// Global Error Handler Middleware (Ensure all errors return JSON instead of HTML)
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('[Global Error Handler]:', err.message);
+  res.status(err.status || 500).json({
+    status: 'error',
+    message: err.message || 'Terjadi kesalahan internal server.'
+  });
+});
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
-

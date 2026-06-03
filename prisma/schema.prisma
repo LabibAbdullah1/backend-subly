@@ -230,3 +230,11 @@ model Setting {
 
   @@map("settings")
 }
+
+model PasswordResetToken {
+  email     String    @id @db.VarChar(255)
+  token     String    @db.VarChar(255)
+  createdAt DateTime? @default(now()) @map("created_at")
+
+  @@map("password_reset_tokens")
+}

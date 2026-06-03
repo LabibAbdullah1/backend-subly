@@ -26,12 +26,13 @@ export async function authenticateJWT(
   }
 
   const token = authHeader.split(' ')[1];
-  const decoded = verifyToken(token);
+  const { decoded, error } = verifyToken(token);
 
-  if (!decoded) {
+  if (!decoded || !decoded.userId) {
     return res.status(401).json({
       status: 'error',
-      message: 'Token tidak valid atau telah kedaluwarsa.'
+      message: 'Token tidak valid atau telah kedaluwarsa.',
+      debugError: error
     });
   }
 

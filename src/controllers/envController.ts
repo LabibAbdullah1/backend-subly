@@ -59,7 +59,7 @@ export async function updateEnv(req: AuthenticatedRequest, res: Response) {
       }
     });
 
-    // 4. Sinkronisasikan perubahan ke file fisik (.env dan .htaccess)
+    // 4. Sinkronisasikan perubahan ke file fisik (.env)
     await writeEnvFiles(subdomain.id, subdomain.docRoot);
 
     return res.status(200).json({
@@ -170,7 +170,7 @@ export async function updateEnvRaw(req: AuthenticatedRequest, res: Response) {
       }
     });
 
-    // 5. Sinkronisasikan perubahan ke file fisik (.env dan .htaccess)
+    // 5. Sinkronisasikan perubahan ke file fisik (.env)
     await writeEnvFiles(subdomain.id, subdomain.docRoot);
 
     return res.status(200).json({

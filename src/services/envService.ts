@@ -13,28 +13,12 @@ export async function writeEnvFiles(subdomainId: bigint, docRoot: string): Promi
     envContent += `${env.key}=${env.value}\n`;
   }
 
-  // 3. Buat format block Litespeed Env .htaccess
-  let htaccessBlock = '# DO NOT REMOVE OR MODIFY. CLOUDLINUX ENV VARS CONFIGURATION BEGIN\n';
-  htaccessBlock += '<IfModule Litespeed>\n';
-  for (const env of envs) {
-    htaccessBlock += `  SetEnv ${env.key} "${env.value}"\n`;
-  }
-  htaccessBlock += '</IfModule>\n';
-  htaccessBlock += '# CLOUDLINUX ENV VARS CONFIGURATION END\n';
-
-  // 4. Simpan berkas .env ke server cPanel / Mock
+  // 3. Simpan berkas .env ke server cPanel / Mock
   await callCpanelApi('Fileman', 'save_file_content', {
     dir: docRoot,
     file: '.env',
     content: envContent
   });
 
-  // 5. Simpan berkas .htaccess ke server cPanel / Mock
-  await callCpanelApi('Fileman', 'save_file_content', {
-    dir: docRoot,
-    file: '.htaccess',
-    content: htaccessBlock
-  });
-
-  console.log(`✔ Env files (.env and .htaccess) written successfully for subdomain ID: ${subdomainId.toString()}`);
+  console.log(`✔ Env file (.env) written successfully for subdomain ID: ${subdomainId.toString()}`);
 }

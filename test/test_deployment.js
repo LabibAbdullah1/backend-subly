@@ -288,20 +288,15 @@ async function runDeploymentTests() {
       throw new Error('Gagal memperbarui raw variabel lingkungan.');
     }
 
-    // Verifikasi fisik file .env dan .htaccess di Windows Mock folder
+    // Verifikasi fisik file .env di Windows Mock folder
     const mockFolder = path.join(process.cwd(), 'uploads/client/deploytest');
     const envFile = path.join(mockFolder, '.env');
-    const htaccessFile = path.join(mockFolder, '.htaccess');
 
     console.log('\n--- Hasil Verifikasi File Fisik Lokal ---');
     console.log('Apakah file .env dibuat?', fs.existsSync(envFile));
-    console.log('Apakah file .htaccess dibuat?', fs.existsSync(htaccessFile));
     
     if (fs.existsSync(envFile)) {
       console.log('Isi File .env:\n', fs.readFileSync(envFile, 'utf8').trim());
-    }
-    if (fs.existsSync(htaccessFile)) {
-      console.log('Isi File .htaccess:\n', fs.readFileSync(htaccessFile, 'utf8').trim());
     }
 
     console.log('\n=== SELURUH PENGUJIAN SPRINT 5 SELESAI (100% SUKSES) ===');

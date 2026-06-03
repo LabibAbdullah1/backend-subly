@@ -171,7 +171,7 @@ export async function validateAndDeployZip(params: {
       }
     }
 
-    // 6. Sinkronisasi Environment Variables (.env & .htaccess) ke docRoot
+    // 6. Sinkronisasi Environment Variables (.env) ke docRoot
     await writeEnvFiles(subdomain.id, docRoot);
 
     // 7. Simpan log/catatan deployment baru di DB

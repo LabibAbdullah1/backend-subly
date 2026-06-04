@@ -9,14 +9,13 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const ROOT_DOMAIN = process.env.CPANEL_ROOT_DOMAIN || 'subly.my.id';
 const CPANEL_USER = process.env.CPANEL_USER || 'sublymyi';
 const CPANEL_API_KEY = process.env.CPANEL_API_KEY;
 const CPANEL_API_URL = process.env.CPANEL_API_URL;
 
 // cPanel menyimpan log NodeJS di: ~/nodelogs/[domain].log
-function getCpanelLogPath(subdomainName: string): string {
-  return `/home/${CPANEL_USER}/nodelogs/${subdomainName}.${ROOT_DOMAIN}.log`;
+function getCpanelLogPath(fullDomain: string): string {
+  return `/home/${CPANEL_USER}/nodelogs/${fullDomain}.log`;
 }
 
 // Path lokal mock untuk Windows development
@@ -64,12 +63,12 @@ async function fetchCpanelLogContent(logPath: string): Promise<string | null> {
 }
 
 // Mock log lines untuk development lokal (Windows)
-function generateMockLogLines(subdomainName: string): string[] {
+function generateMockLogLines(fullDomain: string): string[] {
   const now = new Date();
   const fmt = (d: Date) => d.toISOString().replace('T', ' ').slice(0, 19);
   const mockLines = [
     `[${fmt(new Date(now.getTime() - 120000))}] [INFO] Node.js app starting...`,
-    `[${fmt(new Date(now.getTime() - 115000))}] [INFO] Server: ${subdomainName}.${ROOT_DOMAIN}`,
+    `[${fmt(new Date(now.getTime() - 115000))}] [INFO] Server: ${fullDomain}`,
     `[${fmt(new Date(now.getTime() - 110000))}] [INFO] Environment: production`,
     `[${fmt(new Date(now.getTime() - 100000))}] [INFO] Listening on port 3000`,
     `[${fmt(new Date(now.getTime() - 90000))}]  [INFO] Database connected (MySQL)`,
@@ -129,7 +128,7 @@ export async function streamNodejsLogs(req: AuthenticatedRequest, res: Response)
 
     // Kirim event "connected"
     sendEvent('connected', {
-      message: `Terhubung ke log stream: ${subdomainName}.${ROOT_DOMAIN}`,
+      message: `Terhubung ke log stream: ${subdomain.fullDomain}`,
       timestamp: new Date().toISOString()
     });
 
@@ -147,11 +146,11 @@ export async function streamNodejsLogs(req: AuthenticatedRequest, res: Response)
             lines = tailFile(mockPath, 100);
           } else {
             // Generate mock logs yang realistis
-            lines = generateMockLogLines(subdomainName);
+            lines = generateMockLogLines(subdomain.fullDomain);
           }
         } else {
           // ─── MODE PRODUCTION (CPANEL LINUX) ───
-          const logPath = getCpanelLogPath(subdomainName);
+          const logPath = getCpanelLogPath(subdomain.fullDomain);
 
           if (CPANEL_API_KEY && CPANEL_API_URL) {
             // Baca via HTTP cPanel API
@@ -242,9 +241,9 @@ export async function getRecentLogs(req: AuthenticatedRequest, res: Response) {
 
     if (process.platform === 'win32') {
       const mockPath = getMockLogPath(subdomain.name);
-      lines = fs.existsSync(mockPath) ? tailFile(mockPath, limit) : generateMockLogLines(subdomain.name);
+      lines = fs.existsSync(mockPath) ? tailFile(mockPath, limit) : generateMockLogLines(subdomain.fullDomain);
     } else {
-      const logPath = getCpanelLogPath(subdomain.name);
+      const logPath = getCpanelLogPath(subdomain.fullDomain);
       if (CPANEL_API_KEY && CPANEL_API_URL) {
         const content = await fetchCpanelLogContent(logPath);
         if (content) {

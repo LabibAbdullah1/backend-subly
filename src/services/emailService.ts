@@ -207,3 +207,49 @@ export async function sendResetPasswordEmail(to: string, name: string, token: st
 
   await sendMail(to, 'Reset Kata Sandi Akun - Subly Managed Hosting', emailWrapper('Reset Password Akun', body), token);
 }
+
+export async function sendPaymentProofNotificationEmail(
+  to: string, 
+  clientName: string, 
+  transactionId: string, 
+  planName: string, 
+  amount: number, 
+  paymentId: string | number,
+  token: string
+): Promise<void> {
+  const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+  const verifyUrl = `${backendUrl}/api/payments/${paymentId}/verify-via-email?token=${token}`;
+
+  const body = `
+    <p>Halo Admin,</p>
+    <p>Seorang klien telah mengunggah bukti pembayaran untuk tagihan hosting baru di <b>Subly Managed Hosting</b>.</p>
+    
+    <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+      <tr style="border-bottom: 1px solid #f3f4f6;">
+        <td style="padding: 10px 0; font-weight: bold; color: #9ca3af; width: 140px;">Klien:</td>
+        <td style="padding: 10px 0; color: #1f2937;">${clientName}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #f3f4f6;">
+        <td style="padding: 10px 0; font-weight: bold; color: #9ca3af;">Invoice ID:</td>
+        <td style="padding: 10px 0; font-family: monospace; color: #1f2937;">${transactionId}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #f3f4f6;">
+        <td style="padding: 10px 0; font-weight: bold; color: #9ca3af;">Paket Hosting:</td>
+        <td style="padding: 10px 0; color: #1f2937;">${planName}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #f3f4f6;">
+        <td style="padding: 10px 0; font-weight: bold; color: #9ca3af;">Total Nominal:</td>
+        <td style="padding: 10px 0; font-weight: bold; color: #4f46e5;">Rp ${amount.toLocaleString('id-ID')}</td>
+      </tr>
+    </table>
+
+    <div class="btn-container">
+      <a href="${verifyUrl}" class="btn" target="_blank" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);">Verifikasi & Setujui Pembayaran</a>
+    </div>
+
+    <p>Jika tombol di atas tidak berfungsi, Anda juga dapat menyalin dan menempel tautan verifikasi langsung berikut:</p>
+    <p class="link-alt">${verifyUrl}</p>
+  `;
+
+  await sendMail(to, 'Notifikasi Bukti Pembayaran Klien Baru - Subly', emailWrapper('Verifikasi Pembayaran Masuk', body), token);
+}

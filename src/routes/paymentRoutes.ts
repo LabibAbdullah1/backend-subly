@@ -5,12 +5,14 @@ import {
   checkout,
   uploadProofFile,
   confirmPayment,
-  getPayments
+  getPayments,
+  verifyViaEmail
 } from '../controllers/paymentController.js';
 
 const router = Router();
 
 router.get('/payments', authenticateJWT, getPayments);
+router.get('/payments/:id/verify-via-email', verifyViaEmail);
 router.post('/payments/checkout', authenticateJWT, checkout);
 router.post(
   '/payments/:id/proof',

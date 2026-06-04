@@ -11,15 +11,17 @@ export async function provisionSubdomain(params: {
   dbName: string;
   dbUser: string;
   dbPass: string;
+  rootDomain?: string;
 }): Promise<void> {
   const { subdomainName, docRoot, dbName, dbUser, dbPass } = params;
+  const root = params.rootDomain || ROOT_DOMAIN;
 
-  console.log(`[Provisioning] Memulai provisioning untuk subdomain: ${subdomainName}.${ROOT_DOMAIN}`);
+  console.log(`[Provisioning] Memulai provisioning untuk subdomain: ${subdomainName}.${root}`);
 
   // 1. Pembuatan Subdomain di cPanel
   await callCpanelApi('SubDomain', 'addsubdomain', {
     domain: subdomainName,
-    rootdomain: ROOT_DOMAIN,
+    rootdomain: root,
     dir: docRoot
   });
   console.log('✔ cPanel Subdomain created.');
@@ -107,7 +109,7 @@ export async function provisionSubdomain(params: {
   <div class="container">
     <h1>Subdomain Anda Aktif!</h1>
     <p>Selamat! Subdomain baru Anda berhasil dibuat dan siap digunakan.</p>
-    <div class="domain">${subdomainName}.${ROOT_DOMAIN}</div>
+    <div class="domain">${subdomainName}.${root}</div>
     <p>Silakan upload file proyek Anda atau hubungkan repositori GitHub dari Dashboard Subly untuk memulai deployment.</p>
     <div class="footer">Ditenagai oleh Subly Managed Hosting</div>
   </div>

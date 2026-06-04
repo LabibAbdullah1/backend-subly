@@ -43,6 +43,13 @@ enum VoucherType {
   percent
 }
 
+enum TestimonialStatus {
+  pending
+  approved
+  featured
+  rejected
+}
+
 model User {
   id              BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
   name            String       @db.VarChar(255)
@@ -59,6 +66,7 @@ model User {
   payments        Payment[]
   chats           Chat[]
   reports         Report[]
+  testimonials    Testimonial[]
 
   @@map("users")
 }
@@ -237,4 +245,23 @@ model PasswordResetToken {
   createdAt DateTime? @default(now()) @map("created_at")
 
   @@map("password_reset_tokens")
+}
+
+model Testimonial {
+  id          BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  userId      BigInt            @map("user_id") @db.UnsignedBigInt
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subdomainId BigInt?           @map("subdomain_id") @db.UnsignedBigInt
+  rating      Int               @default(5) @db.TinyInt
+  title       String            @db.VarChar(255)
+  content     String            @db.Text
+  status      TestimonialStatus @default(pending)
+  adminNote   String?           @map("admin_note") @db.Text
+  createdAt   DateTime?         @default(now()) @map("created_at")
+  updatedAt   DateTime?         @updatedAt @map("updated_at")
+  deletedAt   DateTime?         @map("deleted_at")
+
+  // 1 testimonial per subdomain
+  @@unique([subdomainId])
+  @@map("testimonials")
 }

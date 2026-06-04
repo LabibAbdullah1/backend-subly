@@ -3,6 +3,8 @@ import prisma from '../config/db.js';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { serializeBigInt } from '../utils/serialize.js';
 import { CheckoutSchema } from '../validator/billing.js';
+import crypto from 'crypto';
+import { sendPaymentProofNotificationEmail } from '../services/emailService.js';
 
 // 1. Checkout (Client only)
 export async function checkout(req: AuthenticatedRequest, res: Response) {
@@ -232,8 +234,43 @@ export async function uploadProofFile(req: AuthenticatedRequest, res: Response) 
       where: { id: payment.id },
       data: {
         proofPath
+      },
+      include: {
+        user: true,
+        plan: true
       }
     });
+
+    // Send email notification to admin
+    try {
+      const adminEmailSetting = await prisma.setting.findUnique({
+        where: { key: 'admin_notification_email' }
+      });
+      
+      let adminEmail = adminEmailSetting?.value;
+      if (!adminEmail) {
+        // Fallback: search for first admin user
+        const firstAdmin = await prisma.user.findFirst({
+          where: { role: 'Admin', deletedAt: null }
+        });
+        adminEmail = firstAdmin?.email || 'admin@subly.my.id';
+      }
+
+      const jwtSecret = process.env.JWT_SECRET || 'subly-secret';
+      const token = crypto.createHmac('sha256', jwtSecret).update(updatedPayment.id.toString()).digest('hex');
+
+      await sendPaymentProofNotificationEmail(
+        adminEmail,
+        updatedPayment.user.name,
+        updatedPayment.transactionId || `PAY-${updatedPayment.id}`,
+        updatedPayment.plan.name,
+        Number(updatedPayment.amount),
+        updatedPayment.id.toString(),
+        token
+      );
+    } catch (mailErr: any) {
+      console.error('Gagal mengirim email notifikasi ke admin:', mailErr.message);
+    }
 
     return res.status(200).json({
       success: true,
@@ -359,5 +396,86 @@ export async function getPayments(req: AuthenticatedRequest, res: Response) {
       message: 'Gagal mengambil data transaksi.',
       error: error.message
     });
+  }
+}
+
+export async function verifyViaEmail(req: any, res: Response) {
+  const { id } = req.params;
+  const { token } = req.query;
+
+  try {
+    const payment = await prisma.payment.findFirst({
+      where: { id: BigInt(id), deletedAt: null },
+      include: { plan: true, subdomain: true }
+    });
+
+    if (!payment) {
+      return res.status(404).send('<h1>Error 404</h1><p>Transaksi pembayaran tidak ditemukan.</p>');
+    }
+
+    // Verify token
+    const jwtSecret = process.env.JWT_SECRET || 'subly-secret';
+    const expectedToken = crypto.createHmac('sha256', jwtSecret).update(id.toString()).digest('hex');
+
+    if (token !== expectedToken) {
+      return res.status(403).send('<h1>Akses Ditolak</h1><p>Token verifikasi email tidak valid atau sudah kedaluwarsa.</p>');
+    }
+
+    if (payment.status !== 'pending') {
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.send(`
+        <div style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+          <h1 style="color: #4f46e5;">Transaksi Sudah Diproses</h1>
+          <p>Transaksi ini sudah disetujui sebelumnya dengan status <b>${payment.status}</b>.</p>
+          <a href="${frontendUrl}/dashboard" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #4f46e5; color: white; text-decoration: none; border-radius: 5px;">Buka Dashboard Admin</a>
+        </div>
+      `);
+    }
+
+    // 1. Update status pembayaran ke success
+    const updatedPayment = await prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: 'success' }
+    });
+
+    // 2. Jika ada subdomain yang ditautkan, perpanjang masa aktifnya
+    if (payment.subdomainId && payment.subdomain) {
+      const planDurationMonths = payment.plan.durationMonths;
+      const currentExpired = payment.subdomain.expiredAt ? new Date(payment.subdomain.expiredAt) : new Date();
+
+      const baseDate = currentExpired > new Date() ? currentExpired : new Date();
+      const newExpired = new Date(baseDate);
+      newExpired.setMonth(newExpired.getMonth() + planDurationMonths);
+
+      await prisma.subdomain.update({
+        where: { id: payment.subdomainId },
+        data: {
+          expiredAt: newExpired,
+          status: 'active'
+        }
+      });
+
+      // 3. Kirim notifikasi chat ke client
+      await prisma.chat.create({
+        data: {
+          userId: payment.userId,
+          isAdmin: true,
+          message: `Sistem: Pembayaran tagihan ${payment.transactionId} telah diverifikasi via Email oleh Admin. Masa aktif subdomain ${payment.subdomain.fullDomain} berhasil diperpanjang hingga ${newExpired.toLocaleDateString('id-ID')}. Terima kasih!`,
+          isRead: false
+        }
+      });
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.send(`
+      <div style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+        <h1 style="color: #10b981;">Pembayaran Berhasil Diverifikasi</h1>
+        <p>Transaksi <b>${payment.transactionId}</b> telah disetujui. Subdomain klien telah diaktifkan secara otomatis.</p>
+        <a href="${frontendUrl}/dashboard" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #4f46e5; color: white; text-decoration: none; border-radius: 5px;">Buka Dashboard Admin</a>
+      </div>
+    `);
+
+  } catch (error: any) {
+    return res.status(500).send(`<h1>Terjadi Kesalahan</h1><p>${error.message}</p>`);
   }
 }

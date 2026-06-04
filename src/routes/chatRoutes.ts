@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { authenticateJWT } from '../middleware/authMiddleware.js';
-import { getChats, sendChat, markAsRead } from '../controllers/chatController.js';
+import { getChats, sendChat, markAsRead, deleteChat } from '../controllers/chatController.js';
 
 const router = Router();
 
@@ -46,5 +46,6 @@ const uploadChatImage = multer({
 router.get('/chats', authenticateJWT, getChats);
 router.post('/chats', authenticateJWT, uploadChatImage.single('image'), sendChat);
 router.post('/chats/read', authenticateJWT, markAsRead);
+router.delete('/chats/:id', authenticateJWT, deleteChat);
 
 export default router;

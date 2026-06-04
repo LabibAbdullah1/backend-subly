@@ -32,6 +32,13 @@ function generateRandomPassword(length: number): string {
   return result;
 }
 
+async function getRootDomain(): Promise<string> {
+  const setting = await prisma.setting.findUnique({
+    where: { key: 'system_root_domain' }
+  });
+  return setting?.value || process.env.CPANEL_ROOT_DOMAIN || 'subly.my.id';
+}
+
 export async function claimSubdomain(req: AuthenticatedRequest, res: Response) {
   const validation = CreateSubdomainSchema.safeParse(req.body);
   if (!validation.success) {
@@ -89,7 +96,8 @@ export async function claimSubdomain(req: AuthenticatedRequest, res: Response) {
     }
 
     // 3. Siapkan parameter konfigurasi subdomain & database
-    const fullDomain = `${name}.${ROOT_DOMAIN}`;
+    const rootDomain = await getRootDomain();
+    const fullDomain = `${name}.${rootDomain}`;
     const docRoot = `/home/${CPANEL_USER}/client/${name}`;
     
     // Generate nama DB & User unik (format cPanel: prefix_suffix)
@@ -147,7 +155,8 @@ export async function claimSubdomain(req: AuthenticatedRequest, res: Response) {
       docRoot,
       dbName,
       dbUser,
-      dbPass: dbPassPlain
+      dbPass: dbPassPlain,
+      rootDomain
     });
 
     return res.status(201).json({
@@ -413,6 +422,11 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
     const totalDatabases = await prisma.userDatabase.count({ where: { deletedAt: null } });
     const activeQueueJobs = await prisma.deployment.count({ where: { status: 'queued', deletedAt: null } });
 
+    const limitGbSetting = await prisma.setting.findUnique({
+      where: { key: 'system_storage_limit_gb' }
+    });
+    const limitGb = limitGbSetting?.value ? parseInt(limitGbSetting.value, 10) : 256;
+
     const subdomainsList = await prisma.subdomain.findMany({
       where: { deletedAt: null }
     });
@@ -426,13 +440,13 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
         const sizeBytes = getDirectorySize(baseDir);
         overallUsedBytes += sizeBytes;
         consumers.push({
-          name: `${sub.name}.subly.host`,
+          name: sub.fullDomain,
           usedBytes: sizeBytes,
           usedMb: parseFloat((sizeBytes / 1024 / 1024).toFixed(2))
         });
       } catch (err) {
         consumers.push({
-          name: `${sub.name}.subly.host`,
+          name: sub.fullDomain,
           usedBytes: 0,
           usedMb: 0
         });
@@ -452,7 +466,7 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
         storage: {
           usedBytes: overallUsedBytes,
           usedMb: parseFloat((overallUsedBytes / 1024 / 1024).toFixed(2)),
-          limitGb: 256
+          limitGb
         },
         topConsumers
       }

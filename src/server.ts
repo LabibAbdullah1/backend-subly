@@ -15,6 +15,7 @@ import fileManagerRoutes from './routes/fileManagerRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import settingRoutes from './routes/settingRoutes.js';
+import logRoutes from './routes/logRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -41,6 +42,7 @@ app.use('/api', fileManagerRoutes);
 app.use('/api', chatRoutes);
 app.use('/api', reportRoutes);
 app.use('/api', settingRoutes);
+app.use('/api', logRoutes);
 
 // Basic welcome route
 app.get('/', (req, res) => {

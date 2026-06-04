@@ -67,6 +67,7 @@ model User {
   chats           Chat[]
   reports         Report[]
   testimonials    Testimonial[]
+  notifications   Notification[]
 
   @@map("users")
 }
@@ -264,4 +265,17 @@ model Testimonial {
   // 1 testimonial per subdomain
   @@unique([subdomainId])
   @@map("testimonials")
+}
+
+model Notification {
+  id        BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  userId    BigInt?   @map("user_id") @db.UnsignedBigInt
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String    @db.VarChar(255)
+  message   String    @db.Text
+  isRead    Boolean   @default(false) @map("is_read") @db.TinyInt
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  @@map("notifications")
 }

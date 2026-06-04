@@ -304,16 +304,6 @@ export async function confirmPayment(req: AuthenticatedRequest, res: Response) {
       return res.status(400).json({ status: 'error', message: `Transaksi sudah berstatus ${payment.status}.` });
     }
 
-    // Cek apakah invoice kedaluwarsa (> 1 jam) sebelum dikonfirmasi
-    const paymentTime = new Date(payment.createdAt || '').getTime();
-    if (Date.now() - paymentTime > 60 * 60 * 1000) {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: 'failed' }
-      });
-      return res.status(400).json({ status: 'error', message: 'Invoice pembayaran telah kedaluwarsa dan otomatis digagalkan.' });
-    }
-
     // 1. Update status pembayaran ke success
     const updatedPayment = await prisma.payment.update({
       where: { id: payment.id },

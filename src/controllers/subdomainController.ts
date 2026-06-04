@@ -6,6 +6,7 @@ import { provisionSubdomain } from '../services/provisioningService.js';
 import { encryptString, decryptString } from '../utils/crypto.js';
 import { serializeBigInt } from '../utils/serialize.js';
 import { getBaseDirectory, getDirectorySize } from '../services/fileManagerService.js';
+import { callCpanelApi } from '../services/cpanelService.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -53,14 +54,18 @@ export async function claimSubdomain(req: AuthenticatedRequest, res: Response) {
   }
 
   try {
-    // 1. Cari & Verifikasi transaksi pembayaran sukses milik user
+    // 1. Cari & Verifikasi transaksi pembayaran sukses
+    const paymentWhere: any = {
+      id: BigInt(paymentId),
+      status: 'success',
+      deletedAt: null
+    };
+    if (req.user?.role !== 'Admin') {
+      paymentWhere.userId = userId;
+    }
+
     const payment = await prisma.payment.findFirst({
-      where: {
-        id: BigInt(paymentId),
-        userId: userId,
-        status: 'success',
-        deletedAt: null
-      },
+      where: paymentWhere,
       include: {
         plan: true
       }
@@ -112,12 +117,14 @@ export async function claimSubdomain(req: AuthenticatedRequest, res: Response) {
     const expiredAt = new Date(payment.createdAt || new Date());
     expiredAt.setMonth(expiredAt.getMonth() + payment.plan.durationMonths);
 
+    const targetUserId = req.user?.role === 'Admin' ? payment.userId : userId;
+
     // 4. Lakukan operasi database di transaction block agar aman
     const result = await prisma.$transaction(async (tx) => {
       // a. Buat entri subdomain baru
       const newSubdomain = await tx.subdomain.create({
         data: {
-          userId,
+          userId: targetUserId,
           name,
           fullDomain,
           docRoot,
@@ -317,12 +324,20 @@ export async function getUserSubdomains(req: AuthenticatedRequest, res: Response
   }
 
   try {
+    await autoCheckExpiredSubdomains();
+    const whereClause: any = { deletedAt: null };
+    if (req.user?.role !== 'Admin') {
+      whereClause.userId = BigInt(userId);
+    }
     const subdomains = await prisma.subdomain.findMany({
-      where: {
-        userId: BigInt(userId),
-        deletedAt: null
-      },
+      where: whereClause,
       include: {
+        user: {
+          select: {
+            name: true,
+            email: true
+          }
+        },
         databases: {
           where: { deletedAt: null }
         },
@@ -417,6 +432,7 @@ export async function deleteSubdomain(req: AuthenticatedRequest, res: Response) 
 
 export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
   try {
+    await autoCheckExpiredSubdomains();
     const totalUsers = await prisma.user.count({ where: { deletedAt: null } });
     const totalSubdomains = await prisma.subdomain.count({ where: { deletedAt: null } });
     const totalDatabases = await prisma.userDatabase.count({ where: { deletedAt: null } });
@@ -515,6 +531,379 @@ export async function updateStorageOverride(req: AuthenticatedRequest, res: Resp
       message: 'Gagal memperbarui storage limit.',
       error: error.message
     });
+  }
+}
+
+export async function getAdminDiskUsage(req: AuthenticatedRequest, res: Response) {
+  if (req.user?.role !== 'Admin') {
+    return res.status(403).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    await autoCheckExpiredSubdomains();
+    const subdomains = await prisma.subdomain.findMany({
+      where: { deletedAt: null },
+      include: {
+        user: { select: { name: true, email: true } },
+        databases: { where: { deletedAt: null } },
+        payments: {
+          where: { status: 'success' },
+          include: { plan: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        }
+      }
+    });
+
+    const data = [];
+    let totalFilesBytes = 0;
+    let totalDbBytes = 0;
+
+    for (const sub of subdomains) {
+      let filesBytes = 0;
+      try {
+        const baseDir = getBaseDirectory(sub.docRoot);
+        filesBytes = getDirectorySize(baseDir);
+      } catch (err) {
+        // ignore
+      }
+      totalFilesBytes += filesBytes;
+
+      let dbBytes = 0;
+      for (const db of sub.databases) {
+        try {
+          const queryRes = await prisma.$queryRawUnsafe<any[]>(
+            `SELECT SUM(data_length + index_length) AS size_bytes 
+             FROM information_schema.TABLES 
+             WHERE table_schema = ?`,
+            db.dbName
+          );
+          dbBytes += queryRes[0]?.size_bytes ? Number(queryRes[0].size_bytes) : 0;
+        } catch (err) {
+          // ignore
+        }
+      }
+      totalDbBytes += dbBytes;
+
+      const plan = sub.payments[0]?.plan;
+      const limitMb = sub.storageOverrideMb || plan?.maxStorageMb || 1024;
+
+      data.push({
+        id: sub.id.toString(),
+        name: sub.name,
+        fullDomain: sub.fullDomain,
+        owner: sub.user ? { name: sub.user.name, email: sub.user.email } : null,
+        packageName: plan?.name || 'Starter PHP',
+        limitMb,
+        filesBytes,
+        filesMb: parseFloat((filesBytes / 1024 / 1024).toFixed(2)),
+        dbBytes,
+        dbMb: parseFloat((dbBytes / 1024 / 1024).toFixed(2)),
+        totalBytes: filesBytes + dbBytes,
+        totalMb: parseFloat(((filesBytes + dbBytes) / 1024 / 1024).toFixed(2)),
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        subdomains: data,
+        totalAccumulatedMb: parseFloat(((totalFilesBytes + totalDbBytes) / 1024 / 1024).toFixed(2)),
+        totalFilesMb: parseFloat((totalFilesBytes / 1024 / 1024).toFixed(2)),
+        totalDbMb: parseFloat((totalDbBytes / 1024 / 1024).toFixed(2)),
+      }
+    });
+  } catch (error: any) {
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+}
+
+export async function autoCheckExpiredSubdomains() {
+  try {
+    const now = new Date();
+    const expiredSubdomains = await prisma.subdomain.findMany({
+      where: {
+        expiredAt: { lte: now },
+        status: 'active',
+        deletedAt: null
+      }
+    });
+
+    if (expiredSubdomains.length === 0) return;
+
+    const rootDomain = await getRootDomain();
+
+    for (const sub of expiredSubdomains) {
+      await prisma.subdomain.update({
+        where: { id: sub.id },
+        data: { status: 'inactive' }
+      });
+
+      try {
+        const suspendedHtml = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Subdomain Ditangguhkan - Subly</title>
+  <style>
+    body {
+      font-family: 'Outfit', 'Inter', sans-serif;
+      text-align: center;
+      padding: 80px 20px;
+      background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+      color: #f3f4f6;
+      margin: 0;
+      height: 100vh;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      max-width: 600px;
+      background: rgba(31, 41, 55, 0.8);
+      backdrop-filter: blur(10px);
+      padding: 40px;
+      border-radius: 24px;
+      border: 1px border border-red-500/20;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    }
+    h1 {
+      color: #ef4444;
+      font-size: 32px;
+      margin-bottom: 10px;
+    }
+    p {
+      font-size: 18px;
+      line-height: 1.6;
+      color: #d1d5db;
+    }
+    .domain {
+      background-color: #fca5a5;
+      color: #991b1b;
+      padding: 6px 16px;
+      border-radius: 12px;
+      font-family: monospace;
+      font-size: 18px;
+      display: inline-block;
+      margin: 15px 0;
+    }
+    .footer {
+      margin-top: 40px;
+      font-size: 14px;
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Subdomain Ditangguhkan!</h1>
+    <p>Maaf, subdomain Anda untuk sementara waktu ditangguhkan atau tidak aktif karena masa aktif telah habis.</p>
+    <div class="domain">${sub.name}.${rootDomain}</div>
+    <p>Silakan hubungi administrator layanan atau periksa status tagihan Anda.</p>
+    <div class="footer">Ditenagai oleh Subly Managed Hosting</div>
+  </div>
+</body>
+</html>`;
+
+        await callCpanelApi('Fileman', 'save_file_content', {
+          dir: sub.docRoot,
+          file: 'index.html',
+          content: suspendedHtml
+        });
+      } catch (err: any) {
+        console.error(`Gagal menulis file suspensi subdomain ${sub.name}:`, err.message);
+      }
+    }
+  } catch (error: any) {
+    console.error('Error running auto check expired subdomains:', error.message);
+  }
+}
+
+export async function toggleSubdomainStatus(req: AuthenticatedRequest, res: Response) {
+  if (req.user?.role !== 'Admin') {
+    return res.status(403).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  const { id } = req.params;
+  const { status } = req.body; // 'active' or 'inactive'
+
+  if (status !== 'active' && status !== 'inactive') {
+    return res.status(400).json({ status: 'error', message: 'Status tidak valid. Gunakan active atau inactive.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(id), deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan.' });
+    }
+
+    // Update status in db
+    const updatedSubdomain = await prisma.subdomain.update({
+      where: { id: subdomain.id },
+      data: { status }
+    });
+
+    const rootDomain = await getRootDomain();
+
+    if (status === 'inactive') {
+      // Tulis file suspend subdomain
+      const suspendedHtml = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Subdomain Ditangguhkan - Subly</title>
+  <style>
+    body {
+      font-family: 'Outfit', 'Inter', sans-serif;
+      text-align: center;
+      padding: 80px 20px;
+      background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+      color: #f3f4f6;
+      margin: 0;
+      height: 100vh;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      max-width: 600px;
+      background: rgba(31, 41, 55, 0.8);
+      backdrop-filter: blur(10px);
+      padding: 40px;
+      border-radius: 24px;
+      border: 1px border border-red-500/20;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    }
+    h1 {
+      color: #ef4444;
+      font-size: 32px;
+      margin-bottom: 10px;
+    }
+    p {
+      font-size: 18px;
+      line-height: 1.6;
+      color: #d1d5db;
+    }
+    .domain {
+      background-color: #fca5a5;
+      color: #991b1b;
+      padding: 6px 16px;
+      border-radius: 12px;
+      font-family: monospace;
+      font-size: 18px;
+      display: inline-block;
+      margin: 15px 0;
+    }
+    .footer {
+      margin-top: 40px;
+      font-size: 14px;
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Subdomain Ditangguhkan!</h1>
+    <p>Maaf, subdomain Anda untuk sementara waktu ditangguhkan atau tidak aktif.</p>
+    <div class="domain">${subdomain.name}.${rootDomain}</div>
+    <p>Silakan hubungi administrator layanan atau periksa status tagihan Anda.</p>
+    <div class="footer">Ditenagai oleh Subly Managed Hosting</div>
+  </div>
+</body>
+</html>`;
+
+      await callCpanelApi('Fileman', 'save_file_content', {
+        dir: subdomain.docRoot,
+        file: 'index.html',
+        content: suspendedHtml
+      });
+    } else {
+      // Aktifkan kembali: tulis default Html aktif
+      const defaultHtml = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Subdomain Aktif - Subly Managed Hosting</title>
+  <style>
+    body {
+      font-family: 'Outfit', 'Inter', sans-serif;
+      text-align: center;
+      padding: 80px 20px;
+      background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+      color: #1f2937;
+      margin: 0;
+      height: 100vh;
+      box-sizing: border-box;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(10px);
+      padding: 40px;
+      border-radius: 24px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+    }
+    h1 {
+      color: #4f46e5;
+      font-size: 32px;
+      margin-bottom: 10px;
+    }
+    p {
+      font-size: 18px;
+      line-height: 1.6;
+      color: #4b5563;
+    }
+    .domain {
+      background-color: #e0e7ff;
+      color: #3730a3;
+      padding: 6px 16px;
+      border-radius: 12px;
+      font-family: monospace;
+      font-size: 18px;
+      display: inline-block;
+      margin: 15px 0;
+    }
+    .footer {
+      margin-top: 40px;
+      font-size: 14px;
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Subdomain Anda Aktif!</h1>
+    <p>Selamat! Subdomain baru Anda berhasil dibuat dan siap digunakan.</p>
+    <div class="domain">${subdomain.name}.${rootDomain}</div>
+    <p>Silakan upload file proyek Anda atau hubungkan repositori GitHub dari Dashboard Subly untuk memulai deployment.</p>
+    <div class="footer">Ditenagai oleh Subly Managed Hosting</div>
+  </div>
+</body>
+</html>`;
+
+      await callCpanelApi('Fileman', 'save_file_content', {
+        dir: subdomain.docRoot,
+        file: 'index.html',
+        content: defaultHtml
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Status subdomain berhasil diubah menjadi ${status}.`,
+      data: serializeBigInt(updatedSubdomain)
+    });
+  } catch (error: any) {
+    return res.status(500).json({ status: 'error', message: error.message });
   }
 }
 

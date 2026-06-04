@@ -1,14 +1,16 @@
 import { Router } from 'express';
 import { authenticateJWT, requireRole } from '../middleware/authMiddleware.js';
-import { claimSubdomain, getSubdomainDiskUsage, getUserSubdomains, deleteSubdomain, getAdminStats, updateStorageOverride } from '../controllers/subdomainController.js';
+import { claimSubdomain, getSubdomainDiskUsage, getUserSubdomains, deleteSubdomain, getAdminStats, updateStorageOverride, getAdminDiskUsage, toggleSubdomainStatus } from '../controllers/subdomainController.js';
 
 const router = Router();
 
 router.post('/subdomains', authenticateJWT, claimSubdomain);
 router.get('/subdomains', authenticateJWT, getUserSubdomains);
+router.get('/admin/disk-usage', authenticateJWT, requireRole(['Admin']), getAdminDiskUsage);
 router.get('/subdomains/:id/disk-usage', authenticateJWT, getSubdomainDiskUsage);
 router.delete('/subdomains/:id', authenticateJWT, deleteSubdomain);
 router.get('/admin/stats', authenticateJWT, requireRole(['Admin']), getAdminStats);
 router.put('/subdomains/:id/storage-override', authenticateJWT, requireRole(['Admin']), updateStorageOverride);
+router.put('/subdomains/:id/status', authenticateJWT, requireRole(['Admin']), toggleSubdomainStatus);
 
 export default router;

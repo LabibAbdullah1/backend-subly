@@ -36,7 +36,7 @@ lerna-debug.log*
 Thumbs.db
 
 # Project-specific ignored directories & files
-migrations/
+migrations
 /uploads/*
 !/uploads/.gitkeep
-/REVERSE_ENGINEERING_AND_MIGRATION_BLUEPRINT.md
+/REVERSE_ENGINEERING_AND_MIGRATION_BLUEPRINT.md

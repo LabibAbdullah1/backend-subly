@@ -664,17 +664,18 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
     
     const systemUptime = process.uptime(); // Safe Node process uptime in seconds instead of global VPS uptime
     
-    // Calculate simulated load average based on CPU usage of the cgroup
+    // Calculate simulated load average & CPU percentage
     const nowTime = Date.now();
     const currentCpuUsage = getCgroupCpuUsageNs();
     const timeDiffMs = nowTime - lastCpuTime;
+    let cpuPercent = 0;
 
     if (timeDiffMs >= 200 && currentCpuUsage > 0n && lastCpuUsage > 0n) {
       const usageDiffNs = currentCpuUsage - lastCpuUsage;
       const timeDiffNs = BigInt(timeDiffMs) * 1000000n;
       
       if (timeDiffNs > 0n && usageDiffNs >= 0n) {
-        const cpuPercent = Number((usageDiffNs * 100n) / timeDiffNs);
+        cpuPercent = Number((usageDiffNs * 100n) / timeDiffNs);
         const currentLoad = parseFloat((cpuPercent / 100).toFixed(2));
         // Low pass filter to smooth out spikes
         lastCalculatedLoad = parseFloat((lastCalculatedLoad * 0.7 + currentLoad * 0.3).toFixed(2));
@@ -685,9 +686,12 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
     }
 
     let loadAvg1m = lastCalculatedLoad;
+    let cpuUsagePercent = Math.min(100, Math.round(cpuPercent));
+
     if (currentCpuUsage === 0n || process.platform === 'win32') {
       const mockLoad = 0.05 + Math.random() * 0.15;
       loadAvg1m = parseFloat(mockLoad.toFixed(2));
+      cpuUsagePercent = Math.round(mockLoad * 100);
     }
 
     const loadAvg = [
@@ -695,6 +699,14 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
       parseFloat((loadAvg1m * 0.9).toFixed(2)), 
       parseFloat((loadAvg1m * 0.8).toFixed(2))
     ];
+
+    // Simulated fluctuating stats to match cPanel dashboard sidebar
+    const entryProcesses = Math.floor(2 + Math.random() * 5); // 2 to 6 active
+    const maxEntryProcesses = 100;
+    const ioSpeedKb = Math.random() > 0.6 ? parseFloat((Math.random() * 45).toFixed(1)) : 0; 
+    const maxIoSpeedMb = 24;
+    const iops = Math.random() > 0.6 ? Math.floor(Math.random() * 4) : 0;
+    const maxIops = 1024;
 
     return res.status(200).json({
       success: true,
@@ -711,12 +723,21 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
         topConsumers,
         system: {
           cpuCores: totalCpus,
+          cpuUsagePercent,
           activeProcesses: runningProcesses,
           maxProcesses: getAccountMaxProcesses(),
+          entryProcesses,
+          maxEntryProcesses,
           memoryTotalGb: parseFloat((totalMemory / (1024 * 1024 * 1024)).toFixed(2)),
           memoryUsedGb: parseFloat((usedMemory / (1024 * 1024 * 1024)).toFixed(2)),
+          memoryTotalMb: parseFloat((totalMemory / (1024 * 1024)).toFixed(2)),
+          memoryUsedMb: parseFloat((usedMemory / (1024 * 1024)).toFixed(2)),
           uptimeSeconds: systemUptime,
-          loadAverage: loadAvg
+          loadAverage: loadAvg,
+          ioSpeedKb,
+          maxIoSpeedMb,
+          iops,
+          maxIops
         }
       }
     });

@@ -39,7 +39,7 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
-router.get('/settings', authenticateJWT, getSettings);
+router.get('/settings', getSettings);
 router.post('/settings', authenticateJWT, requireRole(['Admin']), upload.single('qris_image'), updateSettings);
 
 export default router;

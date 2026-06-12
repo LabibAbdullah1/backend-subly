@@ -25,7 +25,8 @@
     "test:subdomain": "node test/test_subdomain.js",
     "test:deployment": "node test/test_deployment.js",
     "test:sprint6": "node test/test_sprint6.js",
-    "test:email": "node test/test_email_auth.js"
+    "test:email": "node test/test_email_auth.js",
+    "db:import": "tsx scratch/import_db.ts"
   },
   "keywords": [],
   "author": "",

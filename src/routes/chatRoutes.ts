@@ -4,11 +4,12 @@ import path from 'path';
 import fs from 'fs';
 import { authenticateJWT } from '../middleware/authMiddleware.js';
 import { getChats, sendChat, markAsRead, deleteChat } from '../controllers/chatController.js';
+import { getUploadsPath } from '../utils/path.js';
 
 const router = Router();
 
 // Pastikan direktori uploads/chats/ ada
-const chatDir = path.join(process.cwd(), 'uploads/chats');
+const chatDir = getUploadsPath('chats');
 if (!fs.existsSync(chatDir)) {
   fs.mkdirSync(chatDir, { recursive: true });
 }

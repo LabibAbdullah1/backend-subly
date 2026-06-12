@@ -4,11 +4,12 @@ import path from 'path';
 import fs from 'fs';
 import { authenticateJWT, requireRole } from '../middleware/authMiddleware.js';
 import { getSettings, updateSettings } from '../controllers/settingController.js';
+import { getUploadsPath } from '../utils/path.js';
 
 const router = Router();
 
 // Ensure uploads/settings directory exists
-const settingsDir = path.join(process.cwd(), 'uploads/settings');
+const settingsDir = getUploadsPath('settings');
 if (!fs.existsSync(settingsDir)) {
   fs.mkdirSync(settingsDir, { recursive: true });
 }

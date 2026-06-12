@@ -1,9 +1,10 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { getUploadsPath } from './path.js';
 
 // Pastikan direktori uploads/proofs/ ada
-const uploadDir = path.join(process.cwd(), 'uploads/proofs');
+const uploadDir = getUploadsPath('proofs');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }

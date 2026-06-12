@@ -18,6 +18,7 @@ import settingRoutes from './routes/settingRoutes.js';
 import logRoutes from './routes/logRoutes.js';
 import testimonialRoutes from './routes/testimonialRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import { getUploadsPath } from './utils/path.js';
 
 // Load environment variables
 dotenv.config();
@@ -30,7 +31,7 @@ app.use(cors());
 app.use(express.json());
 
 // Serve folder uploads secara statis agar bukti transfer bisa diakses/diunduh
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/uploads', express.static(getUploadsPath()));
 
 // Routes
 app.use('/api/auth', authRoutes);

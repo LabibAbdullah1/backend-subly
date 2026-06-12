@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { login, register, verifyEmail, forgotPassword, resetPassword, validateResetToken, getMe, getAllUsers } from '../controllers/authController.js';
+import { login, register, verifyEmail, forgotPassword, resetPassword, validateResetToken, getMe, getAllUsers, updateUser, deleteUser, deleteSelf } from '../controllers/authController.js';
 import { authenticateJWT, requireRole } from '../middleware/authMiddleware.js';
 
 const router = Router();
@@ -12,6 +12,9 @@ router.get('/validate-reset-token', validateResetToken);
 router.post('/reset-password', resetPassword);
 router.get('/me', authenticateJWT, getMe);
 router.get('/users', authenticateJWT, requireRole(['Admin']), getAllUsers);
+router.put('/users/:id', authenticateJWT, requireRole(['Admin']), updateUser);
+router.delete('/users/:id', authenticateJWT, requireRole(['Admin']), deleteUser);
+router.delete('/me', authenticateJWT, deleteSelf);
 
 router.get('/temp-verify-all', async (req, res) => {
   try {

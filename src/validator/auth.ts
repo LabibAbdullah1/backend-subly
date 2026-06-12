@@ -50,3 +50,20 @@ export const ResetPasswordSchema = z.object({
   message: "Konfirmasi password tidak cocok",
   path: ["password_confirmation"],
 });
+
+export const UpdateUserSchema = z.object({
+  name: z.string()
+    .min(1, 'Nama wajib diisi')
+    .max(255, 'Nama maksimal 255 karakter'),
+  email: z.string()
+    .min(1, 'Email wajib diisi')
+    .email('Format email tidak valid')
+    .toLowerCase()
+    .max(255),
+  role: z.enum(['Admin', 'Client']),
+  password: z.string()
+    .min(8, 'Password minimal 8 karakter')
+    .optional()
+    .or(z.literal(''))
+});
+

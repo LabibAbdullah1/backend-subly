@@ -2,7 +2,7 @@ import bcryptjs from 'bcryptjs';
 import { Request, Response } from 'express';
 import prisma from '../config/db.js';
 import { signToken, verifyToken } from '../utils/jwt.js';
-import { LoginSchema, RegisterSchema, ForgotPasswordSchema, ResetPasswordSchema } from '../validator/auth.js';
+import { LoginSchema, RegisterSchema, ForgotPasswordSchema, ResetPasswordSchema, UpdateUserSchema } from '../validator/auth.js';
 import { sendVerificationEmail, sendResetPasswordEmail } from '../services/emailService.js';
 import crypto from 'crypto';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
@@ -430,4 +430,160 @@ export async function getAllUsers(req: Request, res: Response) {
     });
   }
 }
+
+export async function updateUser(req: Request, res: Response) {
+  const { id } = req.params;
+  const validation = UpdateUserSchema.safeParse(req.body);
+  if (!validation.success) {
+    const errors: Record<string, string[]> = {};
+    validation.error.errors.forEach((err: any) => {
+      const field = err.path[0] as string;
+      if (!errors[field]) {
+        errors[field] = [];
+      }
+      errors[field].push(err.message);
+    });
+    return res.status(422).json({ errors });
+  }
+
+  const { name, email, role, password } = validation.data;
+
+  try {
+    const existingUser = await prisma.user.findFirst({
+      where: { id: BigInt(id), deletedAt: null }
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'User tidak ditemukan.'
+      });
+    }
+
+    // Check email uniqueness if changed
+    if (email !== existingUser.email) {
+      const duplicate = await prisma.user.findUnique({
+        where: { email }
+      });
+      if (duplicate) {
+        return res.status(422).json({
+          errors: {
+            email: ['Email sudah digunakan oleh user lain.']
+          }
+        });
+      }
+    }
+
+    const dataToUpdate: any = {
+      name,
+      email,
+      role
+    };
+
+    if (password && password.length >= 8) {
+      const salt = await bcryptjs.genSalt(12);
+      dataToUpdate.password = await bcryptjs.hash(password, salt);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: BigInt(id) },
+      data: dataToUpdate,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        emailVerifiedAt: true,
+        createdAt: true,
+        subdomains: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'User berhasil diperbarui.',
+      data: serializeBigInt(updatedUser)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal memperbarui user.',
+      error: error.message
+    });
+  }
+}
+
+export async function deleteUser(req: AuthenticatedRequest, res: Response) {
+  const { id } = req.params;
+  const loggedInUserId = req.user?.id;
+
+  try {
+    const user = await prisma.user.findFirst({
+      where: { id: BigInt(id), deletedAt: null }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'User tidak ditemukan.'
+      });
+    }
+
+    if (loggedInUserId && loggedInUserId.toString() === id.toString()) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Anda tidak dapat menghapus akun Anda sendiri dari panel admin. Gunakan menu hapus akun di profil Anda.'
+      });
+    }
+
+    // Permanent hard delete
+    await prisma.user.delete({
+      where: { id: user.id }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'User berhasil dihapus secara permanen.'
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal menghapus user.',
+      error: error.message
+    });
+  }
+}
+
+export async function deleteSelf(req: AuthenticatedRequest, res: Response) {
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    // Permanent hard delete
+    await prisma.user.delete({
+      where: { id: BigInt(userId) }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Akun Anda berhasil dihapus secara permanen.'
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal menghapus akun Anda.',
+      error: error.message
+    });
+  }
+}
+
+
 

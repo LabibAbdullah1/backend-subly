@@ -157,3 +157,63 @@ export async function deleteVoucher(req: Request, res: Response) {
   }
 }
 
+export async function updateVoucher(req: Request, res: Response) {
+  const { id } = req.params;
+  const validation = CreateVoucherSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(422).json({ errors: validation.error.format() });
+  }
+
+  const { code, type, rewardAmount, usageLimit, expiresAt } = validation.data;
+
+  try {
+    const existingVoucher = await prisma.voucher.findUnique({
+      where: { id: BigInt(id) }
+    });
+
+    if (!existingVoucher) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Voucher tidak ditemukan.'
+      });
+    }
+
+    // Check code uniqueness if changed
+    if (code !== existingVoucher.code) {
+      const duplicate = await prisma.voucher.findUnique({
+        where: { code }
+      });
+      if (duplicate) {
+        return res.status(422).json({
+          status: 'error',
+          message: 'Voucher dengan kode tersebut sudah ada.'
+        });
+      }
+    }
+
+    const voucher = await prisma.voucher.update({
+      where: { id: BigInt(id) },
+      data: {
+        code,
+        type,
+        rewardAmount,
+        usageLimit: usageLimit ?? null,
+        expiresAt: expiresAt ? new Date(expiresAt) : null
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Voucher berhasil diperbarui',
+      data: serializeBigInt(voucher)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal memperbarui voucher',
+      error: error.message
+    });
+  }
+}
+
+

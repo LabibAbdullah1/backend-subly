@@ -26,7 +26,10 @@ const transporter = isMock
       },
       tls: {
         rejectUnauthorized: false
-      }
+      },
+      connectionTimeout: 5000, // 5 seconds connection timeout
+      greetingTimeout: 5000,   // 5 seconds greeting timeout
+      socketTimeout: 5000      // 5 seconds socket timeout
     });
 
 // Simpan isi email terkirim terakhir khusus untuk pengujian otomatis

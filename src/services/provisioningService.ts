@@ -49,7 +49,33 @@ export async function provisionSubdomain(params: {
     database: dbName,
     privileges: 'ALL PRIVILEGES'
   });
-  console.log('✔ MySQL Privileges granted.');
+  console.log('✔ MySQL Privileges granted to client user.');
+
+  // Hubungkan master database user (misal sublymyi_admin) ke database klien agar bisa membaca ukuran database
+  let masterUser = 'sublymyi_admin';
+  try {
+    const dbUrl = process.env.DATABASE_URL;
+    if (dbUrl) {
+      const parsed = new URL(dbUrl);
+      if (parsed.username) {
+        masterUser = parsed.username;
+      }
+    }
+  } catch (e) {
+    // Ignore error and fallback to sublymyi_admin
+  }
+
+  try {
+    await callCpanelApi('Mysql', 'set_privileges_on_database', {
+      user: masterUser,
+      database: dbName,
+      privileges: 'ALL PRIVILEGES'
+    });
+    console.log(`✔ MySQL Privileges granted to master user (${masterUser}).`);
+  } catch (err: any) {
+    console.warn(`[Warning] Gagal memberikan hak akses database ke master user (${masterUser}): ${err.message}`);
+  }
+
 
   // 5. Pembuatan File Landing Page index.html Default
   const defaultHtml = `<!DOCTYPE html>

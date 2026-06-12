@@ -255,7 +255,7 @@ model Testimonial {
   subdomainId BigInt?           @map("subdomain_id") @db.UnsignedBigInt
   rating      Int               @default(5) @db.TinyInt
   title       String            @db.VarChar(255)
-  content     String            @db.Text
+  content     String            @map("comment") @db.Text
   status      TestimonialStatus @default(pending)
   adminNote   String?           @map("admin_note") @db.Text
   createdAt   DateTime?         @default(now()) @map("created_at")
@@ -264,7 +264,7 @@ model Testimonial {
 
   // 1 testimonial per subdomain
   @@unique([subdomainId])
-  @@map("testimonials")
+  @@map("feedback")
 }
 
 model Notification {

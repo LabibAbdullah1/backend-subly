@@ -34,12 +34,43 @@ try {
   lastCpuUsage = getCgroupCpuUsageNs();
 } catch {}
 
+function getUserProcessesMemoryBytes(username: string): number {
+  try {
+    const output = execSync(`ps -u ${username} -o rss`).toString();
+    const lines = output.split('\n');
+    let totalKb = 0;
+    for (const line of lines) {
+      const kb = parseInt(line.trim(), 10);
+      if (!isNaN(kb)) {
+        totalKb += kb;
+      }
+    }
+    return totalKb * 1024; // Convert KB to Bytes
+  } catch {
+    return process.memoryUsage().rss; // Fallback to current node process RSS
+  }
+}
+
 function getAccountMemoryStats() {
-  let totalMemoryBytes = os.totalmem();
+  let username = 'sublymyi';
+  try {
+    username = execSync('whoami').toString().trim();
+  } catch {
+    username = process.env.CPANEL_USER || 'sublymyi';
+  }
+
+  // Check if there is an env variable override for memory limit (in GB), default to 4 GB
+  const envLimitGb = process.env.HOSTING_RAM_LIMIT_GB 
+    ? parseFloat(process.env.HOSTING_RAM_LIMIT_GB) 
+    : 4;
+
+  let totalMemoryBytes = envLimitGb * 1024 * 1024 * 1024;
   let usedMemoryBytes = totalMemoryBytes - os.freemem();
   let cgroupReadSuccessful = false;
 
   if (process.platform !== 'win32') {
+    usedMemoryBytes = getUserProcessesMemoryBytes(username);
+    
     try {
       const limitPathV1 = '/sys/fs/cgroup/memory/memory.limit_in_bytes';
       const usagePathV1 = '/sys/fs/cgroup/memory/memory.usage_in_bytes';
@@ -71,13 +102,6 @@ function getAccountMemoryStats() {
       }
     } catch (err) {
       console.warn('Gagal membaca cgroup memory stats:', err);
-    }
-
-    // If cgroup stats are not available or are unlimited, and we are running on Linux,
-    // we cap the total memory to 2GB and use the current process RSS memory to prevent leaking server details.
-    if (!cgroupReadSuccessful) {
-      totalMemoryBytes = 2 * 1024 * 1024 * 1024; // 2 GB
-      usedMemoryBytes = process.memoryUsage().rss;
     }
   }
 

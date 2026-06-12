@@ -247,6 +247,51 @@ export async function forgotPassword(req: Request, res: Response) {
   }
 }
 
+export async function validateResetToken(req: Request, res: Response) {
+  const token = req.query.token as string;
+  const email = req.query.email as string;
+
+  if (!token || !email) {
+    return res.status(422).json({
+      success: false,
+      message: 'Token dan email wajib disertakan.'
+    });
+  }
+
+  try {
+    const tokenRecord = await prisma.passwordResetToken.findUnique({
+      where: { email }
+    });
+
+    if (!tokenRecord || tokenRecord.token !== token) {
+      return res.status(422).json({
+        success: false,
+        message: 'Tautan reset kata sandi tidak valid atau tidak cocok.'
+      });
+    }
+
+    const tokenTime = tokenRecord.createdAt ? new Date(tokenRecord.createdAt).getTime() : 0;
+    const nowTime = Date.now();
+    if (nowTime - tokenTime > 60 * 60 * 1000) {
+      return res.status(422).json({
+        success: false,
+        message: 'Tautan reset kata sandi telah kedaluwarsa (berlaku maksimal 1 jam).'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Token valid.'
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan saat memproses verifikasi token.',
+      error: err.message
+    });
+  }
+}
+
 export async function resetPassword(req: Request, res: Response) {
   const validation = ResetPasswordSchema.safeParse(req.body);
   if (!validation.success) {

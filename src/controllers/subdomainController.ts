@@ -51,7 +51,7 @@ function getUserProcessesMemoryBytes(username: string): number {
   }
 }
 
-function getAccountMemoryStats() {
+function getAccountMemoryStats(configLimitGb: number) {
   let username = 'sublymyi';
   try {
     username = execSync('whoami').toString().trim();
@@ -59,10 +59,10 @@ function getAccountMemoryStats() {
     username = process.env.CPANEL_USER || 'sublymyi';
   }
 
-  // Check if there is an env variable override for memory limit (in GB), default to 4 GB
+  // Check if there is an env variable override for memory limit (in GB), default to DB setting value
   const envLimitGb = process.env.HOSTING_RAM_LIMIT_GB 
     ? parseFloat(process.env.HOSTING_RAM_LIMIT_GB) 
-    : 4;
+    : configLimitGb;
 
   let totalMemoryBytes = envLimitGb * 1024 * 1024 * 1024;
   let usedMemoryBytes = totalMemoryBytes - os.freemem();
@@ -111,100 +111,41 @@ function getAccountMemoryStats() {
   };
 }
 
-function getAccountCpuCores(): number {
-  let defaultCores = os.cpus().length;
-  let cgroupReadSuccessful = false;
-
-  if (process.platform !== 'win32') {
-    try {
-      const quotaPathV1 = '/sys/fs/cgroup/cpu/cpu.cfs_quota_us';
-      const periodPathV1 = '/sys/fs/cgroup/cpu/cpu.cfs_period_us';
-      const maxPathV2 = '/sys/fs/cgroup/cpu.max';
-
-      if (fs.existsSync(quotaPathV1) && fs.existsSync(periodPathV1)) {
-        const quota = Number(fs.readFileSync(quotaPathV1, 'utf8').trim());
-        const period = Number(fs.readFileSync(periodPathV1, 'utf8').trim());
-        if (quota > 0 && period > 0) {
-          defaultCores = Math.ceil(quota / period);
-          cgroupReadSuccessful = true;
-        }
-      } else if (fs.existsSync(maxPathV2)) {
-        const parts = fs.readFileSync(maxPathV2, 'utf8').trim().split(' ');
-        if (parts.length === 2) {
-          const quota = Number(parts[0]);
-          const period = Number(parts[1]);
-          if (!isNaN(quota) && quota > 0 && period > 0) {
-            defaultCores = Math.ceil(quota / period);
-            cgroupReadSuccessful = true;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('Gagal membaca cgroup CPU stats:', err);
-    }
-
-    // If no cgroup limit is set on Linux, cap the core count to 2 to prevent leaking host threads (e.g. 38 threads)
-    if (!cgroupReadSuccessful && defaultCores > 4) {
-      defaultCores = 2;
-    }
-  }
-
-  return defaultCores;
+function getAccountCpuCores(configLimitCores: number): number {
+  // Always use the admin-configured value from settings database.
+  // cgroup reads on shared hosting often return the whole-VPS quota, not the
+  // cPanel account quota, so they would show misleading numbers.
+  return configLimitCores;
 }
 
 function getRunningProcessCount(): number {
-  // Try to read from cgroups first (extremely fast, no shell spawn)
-  if (process.platform !== 'win32') {
-    try {
-      const pidsCurrentPath = '/sys/fs/cgroup/pids/pids.current';
-      if (fs.existsSync(pidsCurrentPath)) {
-        const pids = parseInt(fs.readFileSync(pidsCurrentPath, 'utf8').trim(), 10);
-        if (!isNaN(pids) && pids > 0) return pids;
-      }
-      
-      const cgroupProcsPath = '/sys/fs/cgroup/cgroup.procs';
-      if (fs.existsSync(cgroupProcsPath)) {
-        const content = fs.readFileSync(cgroupProcsPath, 'utf8').trim();
-        const pids = content.split('\n').filter(p => p.trim().length > 0).length;
-        if (pids > 0) return pids;
-      }
-    } catch {}
-  }
-
-  // Fallback to execSync
+  // Count only processes owned by the cPanel account user.
+  // We intentionally SKIP cgroup pids.current because on shared CloudLinux
+  // servers it reflects the whole-server pids limit, not the cPanel account limit.
   try {
     if (process.platform === 'win32') {
+      // Windows dev environment: count node.exe instances as proxy
       const output = execSync('tasklist /FI "IMAGENAME eq node.exe"').toString();
       const lines = output.split('\n').filter(line => line.includes('node.exe'));
       return lines.length || 1;
     } else {
-      let username = 'sublymyi';
+      let username = process.env.CPANEL_USER || 'sublymyi';
       try {
         username = execSync('whoami').toString().trim();
-      } catch {
-        username = process.env.CPANEL_USER || 'sublymyi';
-      }
-      const output = execSync(`ps -u ${username} | wc -l`).toString();
+      } catch { /* use env fallback */ }
+      // ps -u <user> lists processes for the user; wc -l includes header line
+      const output = execSync(`ps -u ${username} | wc -l`, { timeout: 3000 }).toString();
       const count = parseInt(output.trim(), 10);
+      // Subtract 1 for the ps header line; ensure minimum of 1
       return Math.max(1, count - 1);
     }
   } catch {
-    return 12; // Realistic fallback
+    return 10; // Safe minimal fallback
   }
 }
 
-function getAccountMaxProcesses(): number {
-  try {
-    if (process.platform === 'win32') {
-      return 200; // Mock default limit for local development
-    } else {
-      const output = execSync('ulimit -u').toString().trim();
-      const limit = parseInt(output, 10);
-      return !isNaN(limit) && limit > 0 ? limit : 200;
-    }
-  } catch {
-    return 200; // Default fallback
-  }
+function getAccountMaxProcesses(configLimitProcesses: number): number {
+  return configLimitProcesses;
 }
 
 import { CreateSubdomainSchema } from '../validator/subdomain.js';
@@ -678,11 +619,27 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
     consumers.sort((a, b) => b.usedBytes - a.usedBytes);
     const topConsumers = consumers.slice(0, 5);
 
+    // Fetch dynamic resource limit configs from settings
+    const cpuLimitSetting = await prisma.setting.findUnique({
+      where: { key: 'system_cpu_cores_limit' }
+    });
+    const cpuLimitFallback = cpuLimitSetting?.value ? parseInt(cpuLimitSetting.value, 10) : 4;
+
+    const nprocLimitSetting = await prisma.setting.findUnique({
+      where: { key: 'system_nproc_limit' }
+    });
+    const nprocLimitFallback = nprocLimitSetting?.value ? parseInt(nprocLimitSetting.value, 10) : 200;
+
+    const ramLimitSetting = await prisma.setting.findUnique({
+      where: { key: 'system_ram_limit_gb' }
+    });
+    const ramLimitFallback = ramLimitSetting?.value ? parseFloat(ramLimitSetting.value) : 4;
+
     // Get system health info scoped specifically to the cPanel account limits
-    const totalCpus = getAccountCpuCores();
+    const totalCpus = getAccountCpuCores(cpuLimitFallback);
     const runningProcesses = getRunningProcessCount();
     
-    const memStats = getAccountMemoryStats();
+    const memStats = getAccountMemoryStats(ramLimitFallback);
     const totalMemory = memStats.totalMemoryBytes;
     const usedMemory = memStats.usedMemoryBytes;
     
@@ -749,7 +706,7 @@ export async function getAdminStats(req: AuthenticatedRequest, res: Response) {
           cpuCores: totalCpus,
           cpuUsagePercent,
           activeProcesses: runningProcesses,
-          maxProcesses: getAccountMaxProcesses(),
+          maxProcesses: getAccountMaxProcesses(nprocLimitFallback),
           entryProcesses,
           maxEntryProcesses,
           memoryTotalGb: parseFloat((totalMemory / (1024 * 1024 * 1024)).toFixed(2)),

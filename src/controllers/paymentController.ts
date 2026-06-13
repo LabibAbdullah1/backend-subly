@@ -353,6 +353,46 @@ export async function confirmPayment(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+export async function cancelPayment(req: AuthenticatedRequest, res: Response) {
+  const { id } = req.params;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    const payment = await prisma.payment.findFirst({
+      where: { id: BigInt(id), userId, deletedAt: null }
+    });
+
+    if (!payment) {
+      return res.status(404).json({ status: 'error', message: 'Transaksi pembayaran tidak ditemukan.' });
+    }
+
+    if (payment.status !== 'pending') {
+      return res.status(400).json({ status: 'error', message: `Tidak dapat membatalkan transaksi dengan status ${payment.status}.` });
+    }
+
+    const updatedPayment = await prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: 'failed' }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Transaksi pembayaran berhasil dibatalkan.',
+      data: serializeBigInt(updatedPayment)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal membatalkan transaksi pembayaran.',
+      error: error.message
+    });
+  }
+}
+
 export async function getPayments(req: AuthenticatedRequest, res: Response) {
   const userId = req.user?.id;
   const role = req.user?.role;
@@ -361,6 +401,16 @@ export async function getPayments(req: AuthenticatedRequest, res: Response) {
   }
 
   try {
+    // Auto-expire pending payments older than 1 hour (3600 seconds)
+    const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000);
+    await prisma.payment.updateMany({
+      where: {
+        status: 'pending',
+        createdAt: { lt: oneHourAgo }
+      },
+      data: { status: 'failed' }
+    });
+
     let payments;
     if (role === 'Admin') {
       payments = await prisma.payment.findMany({

@@ -326,25 +326,14 @@ export async function extractZip(req: AuthenticatedRequest, res: Response) {
 
     const targetExtractDir = path.dirname(resolvedZipPath);
 
-    // 3. Ekstrak arsip
-    if (process.platform === 'win32') {
-      try {
-        const zip = new AdmZip(resolvedZipPath);
-        zip.extractAllTo(targetExtractDir, true);
-      } catch (err: any) {
-        return res.status(500).json({
-          status: 'error',
-          message: `Gagal mengekstrak berkas ZIP lokal: ${err.message}`
-        });
-      }
-    } else {
-      const relativeDir = path.relative(baseDir, targetExtractDir).replace(/\\/g, '/');
-      const docRootTarget = relativeDir ? `${subdomain.docRoot}/${relativeDir}` : subdomain.docRoot;
-      const zipName = path.basename(resolvedZipPath);
-      
-      await callCpanelApi('Fileman', 'extract', {
-        dir: docRootTarget,
-        file: zipName
+    // 3. Ekstrak arsip langsung menggunakan AdmZip
+    try {
+      const zip = new AdmZip(resolvedZipPath);
+      zip.extractAllTo(targetExtractDir, true);
+    } catch (err: any) {
+      return res.status(500).json({
+        status: 'error',
+        message: `Gagal mengekstrak berkas ZIP: ${err.message}`
       });
     }
 

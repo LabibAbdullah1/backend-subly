@@ -137,38 +137,17 @@ export async function validateAndDeployZip(params: {
     const docRoot = subdomain.docRoot;
     const zipName = path.basename(zipFilePath);
 
-    if (process.platform === 'win32') {
-      // MODE MOCK WINDOWS: Tulis file langsung ke folder client mock lokal
-      const mockDocRoot = getLocalMockPath(docRoot);
-      if (!fs.existsSync(mockDocRoot)) {
-        fs.mkdirSync(mockDocRoot, { recursive: true });
-      }
-      
-      // Salin zip ke folder mock docRoot
-      const mockZipDest = path.join(mockDocRoot, zipName);
-      fs.copyFileSync(zipFilePath, mockZipDest);
-
-      // Ekstrak via mock call
-      await callCpanelApi('Fileman', 'extract', { dir: docRoot, file: zipName });
-
-      // Hapus file zip
-      await callCpanelApi('Fileman', 'delfile', { dir: docRoot, file: zipName });
-    } else {
-      // MODE REAL LINUX: Salin zip ke docRoot dan panggil API cPanel untuk mengekstrak
-      if (!fs.existsSync(docRoot)) {
-        fs.mkdirSync(docRoot, { recursive: true });
-      }
-      
-      const realZipDest = path.join(docRoot, zipName);
-      fs.copyFileSync(zipFilePath, realZipDest);
-
-      // Panggil cPanel extract
-      await callCpanelApi('Fileman', 'extract', { dir: docRoot, file: zipName });
-
-      // Hapus file zip di server
-      if (fs.existsSync(realZipDest)) {
-        fs.unlinkSync(realZipDest);
-      }
+    // Ekstrak berkas ZIP langsung ke direktori tujuan (docRoot / mock folder)
+    const targetDocRoot = process.platform === 'win32' ? getLocalMockPath(docRoot) : docRoot;
+    if (!fs.existsSync(targetDocRoot)) {
+      fs.mkdirSync(targetDocRoot, { recursive: true });
+    }
+    
+    try {
+      const zip = new AdmZip(zipFilePath);
+      zip.extractAllTo(targetDocRoot, true);
+    } catch (err: any) {
+      throw new Error(`Gagal mengekstrak berkas ZIP ke direktori tujuan: ${err.message}`);
     }
 
     // 6. Sinkronisasi Environment Variables (.env) ke docRoot

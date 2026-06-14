@@ -515,14 +515,19 @@ export async function renameFileOrFolder(req: AuthenticatedRequest, res: Respons
 export async function moveFileOrFolder(req: AuthenticatedRequest, res: Response) {
   const subdomainId = req.params.id;
   const userId = req.user?.id;
-  const { path: relativePath, newPath } = req.body;
+  const { path: relativePath, paths: relativePaths, newPath } = req.body;
 
   if (!userId) {
     return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
   }
 
-  if (!relativePath || !newPath) {
-    return res.status(400).json({ status: 'error', message: 'Path asal dan path tujuan wajib ditentukan.' });
+  if (!newPath) {
+    return res.status(400).json({ status: 'error', message: 'Path tujuan wajib ditentukan.' });
+  }
+
+  const isBulk = Array.isArray(relativePaths) && relativePaths.length > 0;
+  if (!relativePath && !isBulk) {
+    return res.status(400).json({ status: 'error', message: 'Path asal wajib ditentukan.' });
   }
 
   try {
@@ -535,25 +540,57 @@ export async function moveFileOrFolder(req: AuthenticatedRequest, res: Response)
     }
 
     const baseDir = getBaseDirectory(subdomain.docRoot);
-    const resolvedOldPath = safeResolvePath(baseDir, relativePath);
-    const resolvedNewPath = safeResolvePath(baseDir, newPath);
 
-    if (!fs.existsSync(resolvedOldPath)) {
-      return res.status(404).json({ status: 'error', message: 'Berkas atau folder asal tidak ditemukan.' });
+    if (isBulk) {
+      // Validasi semua file/folder asal dan tujuan
+      const resolvedPairs: { oldPath: string; newPath: string }[] = [];
+      for (const srcPath of relativePaths) {
+        const resolvedOld = safeResolvePath(baseDir, srcPath);
+        const filename = path.basename(resolvedOld);
+        // newPath adalah folder tujuan, jadi simpan dengan nama file aslinya
+        const resolvedNew = safeResolvePath(baseDir, `${newPath}/${filename}`);
+
+        if (!fs.existsSync(resolvedOld)) {
+          return res.status(404).json({ status: 'error', message: `Berkas asal "${srcPath}" tidak ditemukan.` });
+        }
+
+        // Proteksi berkas sistem
+        if (filename === '.env' || filename === '.subly_status') {
+          return res.status(403).json({ status: 'error', message: 'Berkas sistem yang dilindungi tidak dapat dipindahkan.' });
+        }
+
+        if (fs.existsSync(resolvedNew)) {
+          return res.status(400).json({ status: 'error', message: `Tujuan pemindahan sudah ada berkas dengan nama "${filename}".` });
+        }
+
+        resolvedPairs.push({ oldPath: resolvedOld, newPath: resolvedNew });
+      }
+
+      // Jalankan pemindahan secara fisik setelah seluruh validasi aman
+      for (const pair of resolvedPairs) {
+        fs.mkdirSync(path.dirname(pair.newPath), { recursive: true });
+        fs.renameSync(pair.oldPath, pair.newPath);
+      }
+    } else {
+      const resolvedOldPath = safeResolvePath(baseDir, relativePath);
+      const resolvedNewPath = safeResolvePath(baseDir, newPath);
+
+      if (!fs.existsSync(resolvedOldPath)) {
+        return res.status(404).json({ status: 'error', message: 'Berkas atau folder asal tidak ditemukan.' });
+      }
+
+      const filename = path.basename(resolvedOldPath);
+      if (filename === '.env' || filename === '.subly_status') {
+        return res.status(403).json({ status: 'error', message: 'Berkas sistem yang dilindungi tidak dapat dipindahkan.' });
+      }
+
+      if (fs.existsSync(resolvedNewPath)) {
+        return res.status(400).json({ status: 'error', message: 'Tujuan pemindahan sudah ada berkas dengan nama yang sama.' });
+      }
+
+      fs.mkdirSync(path.dirname(resolvedNewPath), { recursive: true });
+      fs.renameSync(resolvedOldPath, resolvedNewPath);
     }
-
-    if (fs.existsSync(resolvedNewPath)) {
-      return res.status(400).json({ status: 'error', message: 'Tujuan pemindahan sudah ada berkas dengan nama yang sama.' });
-    }
-
-    // Proteksi berkas sistem
-    const oldFilename = path.basename(resolvedOldPath);
-    if (oldFilename === '.env' || oldFilename === '.subly_status') {
-      return res.status(403).json({ status: 'error', message: 'Berkas sistem yang dilindungi tidak dapat dipindahkan.' });
-    }
-
-    fs.mkdirSync(path.dirname(resolvedNewPath), { recursive: true });
-    fs.renameSync(resolvedOldPath, resolvedNewPath);
 
     return res.status(200).json({
       success: true,

@@ -75,11 +75,21 @@ export async function validateAndDeployZip(params: {
     orderBy: { createdAt: 'desc' }
   });
 
-  if (!lastPayment) {
-    throw new Error('Informasi paket langganan (plan) tidak ditemukan untuk subdomain ini.');
-  }
-
-  const plan = lastPayment.plan;
+  const paymentPlan = lastPayment?.plan;
+  const firstActivePlan = !paymentPlan
+    ? await prisma.plan.findFirst({ where: { isActive: true } })
+    : null;
+  const plan = (paymentPlan || firstActivePlan || {
+    id: BigInt(0),
+    name: 'Default Fallback Plan',
+    price: BigInt(0),
+    type: 'HTML',
+    maxStorageMb: 100,
+    maxDatabases: 1,
+    durationMonths: 1,
+    isActive: true,
+    description: 'System Fallback Plan'
+  }) as any;
   const tempDir = path.join(process.cwd(), 'uploads/temp', `${subdomain.name}-${Date.now()}`);
 
   try {

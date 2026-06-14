@@ -15,14 +15,15 @@ export async function writeEnvFiles(subdomainId: bigint, docRoot: string): Promi
     envContent += `${env.key}=${env.value}\n`;
   }
 
-  // 3. Simpan berkas .env ke server cPanel / Mock
-  await callCpanelApi('Fileman', 'save_file_content', {
-    dir: docRoot,
-    file: '.env',
-    content: envContent
-  });
+  // 3. Simpan berkas .env langsung menggunakan fs
+  const envPath = getPhysicalEnvPath(docRoot);
+  const targetDir = path.dirname(envPath);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+  fs.writeFileSync(envPath, envContent, 'utf8');
 
-  console.log(`✔ Env file (.env) written successfully for subdomain ID: ${subdomainId.toString()}`);
+  console.log(`✔ Env file (.env) written successfully at: ${envPath} for subdomain ID: ${subdomainId.toString()}`);
 }
 
 function getPhysicalEnvPath(docRoot: string): string {

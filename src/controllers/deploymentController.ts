@@ -5,6 +5,7 @@ import { UploadChunkSchema, ConnectGitSchema, CheckGitRepoSchema } from '../vali
 import { validateAndDeployZip, getGithubBranches, deployFromGit } from '../services/deploymentService.js';
 import { encryptString, decryptString } from '../utils/crypto.js';
 import { serializeBigInt } from '../utils/serialize.js';
+import { writeDefaultSubdomainFiles } from '../services/envService.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -350,6 +351,8 @@ export async function approveDeployment(req: AuthenticatedRequest, res: Response
         where: { id: deployment.subdomainId },
         data: updateData
       });
+
+      await writeDefaultSubdomainFiles(deployment.subdomain.docRoot, 'active');
     }
 
     return res.status(200).json({

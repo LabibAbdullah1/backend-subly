@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import prisma from '../config/db.js';
 import { getBaseDirectory } from './fileManagerService.js';
+import { writeDefaultSubdomainFiles } from './envService.js';
 
 const suspendedHtmlTemplate = `<!DOCTYPE html>
 <html lang="id">
@@ -105,39 +106,7 @@ export async function cleanupExpiredSubdomains(): Promise<{ suspendedCount: numb
 
     for (const subdomain of expiredSubdomains) {
       try {
-        const baseDir = getBaseDirectory(subdomain.docRoot);
-
-        if (fs.existsSync(baseDir)) {
-          // a. Backup index.html milik klien jika ada
-          const indexHtmlPath = path.join(baseDir, 'index.html');
-          if (fs.existsSync(indexHtmlPath)) {
-            const backupIndexHtmlPath = path.join(baseDir, 'index.html.bak');
-            if (!fs.existsSync(backupIndexHtmlPath)) {
-              fs.renameSync(indexHtmlPath, backupIndexHtmlPath);
-              console.log(`[Cron Expired Subdomains] Backed up index.html for ${subdomain.name}`);
-            } else {
-              // Jika backup sudah ada, hapus index asli
-              fs.unlinkSync(indexHtmlPath);
-            }
-          }
-
-          // b. Backup .htaccess milik klien jika ada
-          const htaccessPath = path.join(baseDir, '.htaccess');
-          if (fs.existsSync(htaccessPath)) {
-            const backupHtaccessPath = path.join(baseDir, '.htaccess.bak');
-            if (!fs.existsSync(backupHtaccessPath)) {
-              fs.renameSync(htaccessPath, backupHtaccessPath);
-              console.log(`[Cron Expired Subdomains] Backed up .htaccess for ${subdomain.name}`);
-            } else {
-              // Jika backup sudah ada, hapus htaccess asli
-              fs.unlinkSync(htaccessPath);
-            }
-          }
-
-          // c. Tulis index.html suspended/expired page baru
-          fs.writeFileSync(indexHtmlPath, suspendedHtmlTemplate, 'utf8');
-          console.log(`[Cron Expired Subdomains] Wrote suspension notice for ${subdomain.name}`);
-        }
+        await writeDefaultSubdomainFiles(subdomain.docRoot, 'suspended');
 
         // d. Bersihkan file ZIP lama terkait subdomain ini di folder uploads/deployments
         const deploymentsDir = path.join(process.cwd(), 'uploads/deployments');

@@ -73,6 +73,30 @@ export async function listFiles(req: AuthenticatedRequest, res: Response) {
 
     for (const item of items) {
       const itemPath = path.join(targetDir, item);
+      
+      // Filter out system default files
+      if (item === '.subly_status' || item === 'index.php.bak' || item === '.htaccess.bak') {
+        continue;
+      }
+
+      if (item === 'index.php') {
+        try {
+          const content = fs.readFileSync(itemPath, 'utf8');
+          if (content.includes('System Default Router')) {
+            continue;
+          }
+        } catch (err) {}
+      }
+
+      if (item === '.htaccess') {
+        try {
+          const content = fs.readFileSync(itemPath, 'utf8');
+          if (content.includes('Subly Suspended Redirect')) {
+            continue;
+          }
+        } catch (err) {}
+      }
+
       const itemStat = fs.statSync(itemPath);
       const itemRelPath = path.relative(baseDir, itemPath).replace(/\\/g, '/');
       const lastModified = itemStat.mtime.toUTCString();
@@ -174,13 +198,41 @@ export async function deleteFile(req: AuthenticatedRequest, res: Response) {
         return res.status(404).json({ status: 'error', message: `Berkas atau folder tidak ditemukan: ${relPath}` });
       }
 
-      // 4. Proteksi file sensitif (.env dan .htaccess)
+      // 4. Proteksi file sensitif (.env dan berkas sistem default)
       const filename = path.basename(resolvedPath);
-      if (filename === '.env' || filename === '.htaccess') {
+      if (filename === '.env') {
         return res.status(403).json({
           status: 'error',
           message: `Akses ditolak. File konfigurasi sistem (${filename}) dilindungi dari penghapusan.`
         });
+      }
+      if (filename === '.subly_status' || filename === 'index.php.bak' || filename === '.htaccess.bak') {
+        return res.status(403).json({
+          status: 'error',
+          message: `Akses ditolak. File sistem (${filename}) dilindungi dari penghapusan.`
+        });
+      }
+      if (filename === 'index.php') {
+        try {
+          const content = fs.readFileSync(resolvedPath, 'utf8');
+          if (content.includes('System Default Router')) {
+            return res.status(403).json({
+              status: 'error',
+              message: `Akses ditolak. File sistem (${filename}) dilindungi dari penghapusan.`
+            });
+          }
+        } catch (err) {}
+      }
+      if (filename === '.htaccess') {
+        try {
+          const content = fs.readFileSync(resolvedPath, 'utf8');
+          if (content.includes('Subly Suspended Redirect')) {
+            return res.status(403).json({
+              status: 'error',
+              message: `Akses ditolak. File sistem (${filename}) dilindungi dari penghapusan.`
+            });
+          }
+        } catch (err) {}
       }
 
       resolvedPaths.push(resolvedPath);

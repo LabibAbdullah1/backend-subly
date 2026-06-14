@@ -5,6 +5,7 @@ import { serializeBigInt } from '../utils/serialize.js';
 import { CheckoutSchema } from '../validator/billing.js';
 import crypto from 'crypto';
 import { sendPaymentProofNotificationEmail } from '../services/emailService.js';
+import { writeDefaultSubdomainFiles } from '../services/envService.js';
 
 // 1. Checkout (Client only)
 export async function checkout(req: AuthenticatedRequest, res: Response) {
@@ -156,6 +157,8 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
               status: 'active'
             }
           });
+
+          await writeDefaultSubdomainFiles(subdomain.docRoot, 'active');
 
           // Kirim chat notifikasi otomatis
           await prisma.chat.create({
@@ -364,6 +367,8 @@ export async function confirmPayment(req: AuthenticatedRequest, res: Response) {
         }
       });
 
+      await writeDefaultSubdomainFiles(payment.subdomain.docRoot, 'active');
+
       // 3. Kirim notifikasi chat ke client
       await prisma.chat.create({
         data: {
@@ -530,6 +535,8 @@ export async function verifyViaEmail(req: any, res: Response) {
           status: 'active'
         }
       });
+
+      await writeDefaultSubdomainFiles(payment.subdomain.docRoot, 'active');
 
       // 3. Kirim notifikasi chat ke client
       await prisma.chat.create({

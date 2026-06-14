@@ -1,5 +1,6 @@
 import { callCpanelApi } from './cpanelService.js';
 import dotenv from 'dotenv';
+import { writeDefaultSubdomainFiles } from './envService.js';
 
 dotenv.config();
 
@@ -77,76 +78,8 @@ export async function provisionSubdomain(params: {
   }
 
 
-  // 5. Pembuatan File Landing Page index.html Default
-  const defaultHtml = `<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Subdomain Aktif - Subly Managed Hosting</title>
-  <style>
-    body {
-      font-family: 'Outfit', 'Inter', sans-serif;
-      text-align: center;
-      padding: 80px 20px;
-      background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-      color: #1f2937;
-      margin: 0;
-      height: 100vh;
-      box-sizing: border-box;
-    }
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      background: rgba(255, 255, 255, 0.8);
-      backdrop-filter: blur(10px);
-      padding: 40px;
-      border-radius: 24px;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
-    }
-    h1 {
-      color: #4f46e5;
-      font-size: 32px;
-      margin-bottom: 10px;
-    }
-    p {
-      font-size: 18px;
-      line-height: 1.6;
-      color: #4b5563;
-    }
-    .domain {
-      background-color: #e0e7ff;
-      color: #3730a3;
-      padding: 6px 16px;
-      border-radius: 12px;
-      font-family: monospace;
-      font-size: 18px;
-      display: inline-block;
-      margin: 15px 0;
-    }
-    .footer {
-      margin-top: 40px;
-      font-size: 14px;
-      color: #9ca3af;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>Subdomain Anda Aktif!</h1>
-    <p>Selamat! Subdomain baru Anda berhasil dibuat dan siap digunakan.</p>
-    <div class="domain">${subdomainName}.${root}</div>
-    <p>Silakan upload file proyek Anda atau hubungkan repositori GitHub dari Dashboard Subly untuk memulai deployment.</p>
-    <div class="footer">Ditenagai oleh Subly Managed Hosting</div>
-  </div>
-</body>
-</html>`;
-
-  await callCpanelApi('Fileman', 'save_file_content', {
-    dir: docRoot,
-    file: 'index.html',
-    content: defaultHtml
-  });
-  console.log('✔ Default index.html created.');
+  // 5. Pembuatan File Default Sistem via writeDefaultSubdomainFiles
+  await writeDefaultSubdomainFiles(docRoot, 'active');
+  console.log('✔ Default system files created.');
   console.log('[Provisioning] Selesai dengan sukses!');
 }

@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import os from 'os';
 import fs from 'fs';
+import path from 'path';
 import { execSync } from 'child_process';
 import prisma from '../config/db.js';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
@@ -154,7 +155,7 @@ import { encryptString, decryptString } from '../utils/crypto.js';
 import { serializeBigInt } from '../utils/serialize.js';
 import { getBaseDirectory, getDirectorySize } from '../services/fileManagerService.js';
 import { callCpanelApi } from '../services/cpanelService.js';
-import { syncEnvFileWithDatabase } from '../services/envService.js';
+import { syncEnvFileWithDatabase, writeDefaultSubdomainFiles, getPhysicalDocRoot } from '../services/envService.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -487,8 +488,29 @@ export async function getUserSubdomains(req: AuthenticatedRequest, res: Response
     for (const sub of basicSubdomains) {
       try {
         await syncEnvFileWithDatabase(sub.id, sub.docRoot);
+
+        // Migrasi subdomain lama ke router baru jika .subly_status belum ada
+        const physicalRoot = getPhysicalDocRoot(sub.docRoot);
+        const statusFile = path.join(physicalRoot, '.subly_status');
+        if (!fs.existsSync(statusFile)) {
+          const subdomainFull = await prisma.subdomain.findUnique({
+            where: { id: sub.id }
+          });
+          if (subdomainFull) {
+            await writeDefaultSubdomainFiles(sub.docRoot, subdomainFull.status);
+            // Hapus index.html default lama jika ada agar tidak bentrok dengan index.php baru
+            const oldIndexHtml = path.join(physicalRoot, 'index.html');
+            if (fs.existsSync(oldIndexHtml)) {
+              const content = fs.readFileSync(oldIndexHtml, 'utf8');
+              if (content.includes('Subly Managed Hosting') || content.includes('Subdomain Anda Aktif!')) {
+                fs.unlinkSync(oldIndexHtml);
+                console.log(`[Migration] Deleted old default index.html for ${subdomainFull.name}`);
+              }
+            }
+          }
+        }
       } catch (err: any) {
-        console.error(`[getUserSubdomains] Gagal sinkronisasi env untuk subdomain ID ${sub.id.toString()}:`, err.message);
+        console.error(`[getUserSubdomains] Gagal sinkronisasi atau migrasi env untuk subdomain ID ${sub.id.toString()}:`, err.message);
       }
     }
 
@@ -891,78 +913,7 @@ export async function autoCheckExpiredSubdomains() {
       });
 
       try {
-        const suspendedHtml = `<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Subdomain Ditangguhkan - Subly</title>
-  <style>
-    body {
-      font-family: 'Outfit', 'Inter', sans-serif;
-      text-align: center;
-      padding: 80px 20px;
-      background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
-      color: #f3f4f6;
-      margin: 0;
-      height: 100vh;
-      box-sizing: border-box;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .container {
-      max-width: 600px;
-      background: rgba(31, 41, 55, 0.8);
-      backdrop-filter: blur(10px);
-      padding: 40px;
-      border-radius: 24px;
-      border: 1px border border-red-500/20;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-    }
-    h1 {
-      color: #ef4444;
-      font-size: 32px;
-      margin-bottom: 10px;
-    }
-    p {
-      font-size: 18px;
-      line-height: 1.6;
-      color: #d1d5db;
-    }
-    .domain {
-      background-color: #fca5a5;
-      color: #991b1b;
-      padding: 6px 16px;
-      border-radius: 12px;
-      font-family: monospace;
-      font-size: 18px;
-      display: inline-block;
-      margin: 15px 0;
-    }
-    .footer {
-      margin-top: 40px;
-      font-size: 14px;
-      color: #9ca3af;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>Subdomain Ditangguhkan!</h1>
-    <p>Maaf, subdomain Anda untuk sementara waktu ditangguhkan atau tidak aktif karena masa aktif telah habis.</p>
-    <div class="domain">${sub.name}.${rootDomain}</div>
-    <p>Silakan hubungi administrator layanan atau periksa status tagihan Anda.</p>
-    <div class="footer">Ditenagai oleh Subly Managed Hosting</div>
-  </div>
-</body>
-</html>`;
-
-        await callCpanelApi('Fileman', 'save_file_content', {
-          dir: sub.docRoot,
-          file: 'index.html',
-          content: suspendedHtml
-        });
+        await writeDefaultSubdomainFiles(sub.docRoot, 'inactive');
       } catch (err: any) {
         console.error(`Gagal menulis file suspensi subdomain ${sub.name}:`, err.message);
       }
@@ -999,153 +950,10 @@ export async function toggleSubdomainStatus(req: AuthenticatedRequest, res: Resp
       data: { status }
     });
 
-    const rootDomain = await getRootDomain();
-
-    if (status === 'inactive') {
-      // Tulis file suspend subdomain
-      const suspendedHtml = `<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Subdomain Ditangguhkan - Subly</title>
-  <style>
-    body {
-      font-family: 'Outfit', 'Inter', sans-serif;
-      text-align: center;
-      padding: 80px 20px;
-      background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
-      color: #f3f4f6;
-      margin: 0;
-      height: 100vh;
-      box-sizing: border-box;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .container {
-      max-width: 600px;
-      background: rgba(31, 41, 55, 0.8);
-      backdrop-filter: blur(10px);
-      padding: 40px;
-      border-radius: 24px;
-      border: 1px border border-red-500/20;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-    }
-    h1 {
-      color: #ef4444;
-      font-size: 32px;
-      margin-bottom: 10px;
-    }
-    p {
-      font-size: 18px;
-      line-height: 1.6;
-      color: #d1d5db;
-    }
-    .domain {
-      background-color: #fca5a5;
-      color: #991b1b;
-      padding: 6px 16px;
-      border-radius: 12px;
-      font-family: monospace;
-      font-size: 18px;
-      display: inline-block;
-      margin: 15px 0;
-    }
-    .footer {
-      margin-top: 40px;
-      font-size: 14px;
-      color: #9ca3af;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>Subdomain Ditangguhkan!</h1>
-    <p>Maaf, subdomain Anda untuk sementara waktu ditangguhkan atau tidak aktif.</p>
-    <div class="domain">${subdomain.name}.${rootDomain}</div>
-    <p>Silakan hubungi administrator layanan atau periksa status tagihan Anda.</p>
-    <div class="footer">Ditenagai oleh Subly Managed Hosting</div>
-  </div>
-</body>
-</html>`;
-
-      await callCpanelApi('Fileman', 'save_file_content', {
-        dir: subdomain.docRoot,
-        file: 'index.html',
-        content: suspendedHtml
-      });
-    } else {
-      // Aktifkan kembali: tulis default Html aktif
-      const defaultHtml = `<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Subdomain Aktif - Subly Managed Hosting</title>
-  <style>
-    body {
-      font-family: 'Outfit', 'Inter', sans-serif;
-      text-align: center;
-      padding: 80px 20px;
-      background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-      color: #1f2937;
-      margin: 0;
-      height: 100vh;
-      box-sizing: border-box;
-    }
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      background: rgba(255, 255, 255, 0.8);
-      backdrop-filter: blur(10px);
-      padding: 40px;
-      border-radius: 24px;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
-    }
-    h1 {
-      color: #4f46e5;
-      font-size: 32px;
-      margin-bottom: 10px;
-    }
-    p {
-      font-size: 18px;
-      line-height: 1.6;
-      color: #4b5563;
-    }
-    .domain {
-      background-color: #e0e7ff;
-      color: #3730a3;
-      padding: 6px 16px;
-      border-radius: 12px;
-      font-family: monospace;
-      font-size: 18px;
-      display: inline-block;
-      margin: 15px 0;
-    }
-    .footer {
-      margin-top: 40px;
-      font-size: 14px;
-      color: #9ca3af;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>Subdomain Anda Aktif!</h1>
-    <p>Selamat! Subdomain baru Anda berhasil dibuat dan siap digunakan.</p>
-    <div class="domain">${subdomain.name}.${rootDomain}</div>
-    <p>Silakan upload file proyek Anda atau hubungkan repositori GitHub dari Dashboard Subly untuk memulai deployment.</p>
-    <div class="footer">Ditenagai oleh Subly Managed Hosting</div>
-  </div>
-</body>
-</html>`;
-
-      await callCpanelApi('Fileman', 'save_file_content', {
-        dir: subdomain.docRoot,
-        file: 'index.html',
-        content: defaultHtml
-      });
+    try {
+      await writeDefaultSubdomainFiles(subdomain.docRoot, status);
+    } catch (err: any) {
+      console.error(`Gagal mengubah file status subdomain ${subdomain.name}:`, err.message);
     }
 
     return res.status(200).json({

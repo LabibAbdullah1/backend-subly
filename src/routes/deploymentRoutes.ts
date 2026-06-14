@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { authenticateJWT, requireRole } from '../middleware/authMiddleware.js';
-import { uploadChunk, checkGitRepository, connectGit, triggerSubdomainDeploy, approveDeployment, rejectDeployment } from '../controllers/deploymentController.js';
+import { uploadChunk, checkGitRepository, connectGit, disconnectGit, triggerSubdomainDeploy, approveDeployment, rejectDeployment } from '../controllers/deploymentController.js';
 
 const router = Router();
 
@@ -37,6 +37,7 @@ router.post('/deployments/upload-chunk', authenticateJWT, uploadChunkMulter.sing
 // Rute GitHub Integration
 router.post('/subdomains/git/check-repository', authenticateJWT, checkGitRepository);
 router.post('/subdomains/:id/git/connect', authenticateJWT, connectGit);
+router.post('/subdomains/:id/git/disconnect', authenticateJWT, disconnectGit);
 router.post('/subdomains/:id/deploy', authenticateJWT, triggerSubdomainDeploy);
 
 // Rute Deployment Approval & Rejection (Admin Only)

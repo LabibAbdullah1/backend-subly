@@ -403,3 +403,308 @@ export async function extractZip(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+export async function createFileOrFolder(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+  const { path: relativePath, type } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  if (!relativePath) {
+    return res.status(400).json({ status: 'error', message: 'Path nama berkas atau folder wajib ditentukan.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(subdomainId), userId, deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan atau bukan milik Anda.' });
+    }
+
+    const baseDir = getBaseDirectory(subdomain.docRoot);
+    const resolvedPath = safeResolvePath(baseDir, relativePath);
+
+    if (fs.existsSync(resolvedPath)) {
+      return res.status(400).json({ status: 'error', message: 'Berkas atau folder dengan nama tersebut sudah ada.' });
+    }
+
+    if (type === 'folder') {
+      fs.mkdirSync(resolvedPath, { recursive: true });
+    } else {
+      // Buat folder parent jika belum ada
+      fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+      fs.writeFileSync(resolvedPath, '');
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: `${type === 'folder' ? 'Folder' : 'Berkas'} berhasil dibuat.`
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal membuat berkas atau folder.',
+      error: error.message
+    });
+  }
+}
+
+export async function renameFileOrFolder(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+  const { path: relativePath, newName } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  if (!relativePath || !newName) {
+    return res.status(400).json({ status: 'error', message: 'Path lama dan nama baru wajib ditentukan.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(subdomainId), userId, deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan atau bukan milik Anda.' });
+    }
+
+    const baseDir = getBaseDirectory(subdomain.docRoot);
+    const resolvedOldPath = safeResolvePath(baseDir, relativePath);
+    const resolvedNewPath = path.join(path.dirname(resolvedOldPath), newName);
+
+    // Proteksi directory traversal pada path baru
+    safeResolvePath(baseDir, path.relative(baseDir, resolvedNewPath));
+
+    if (!fs.existsSync(resolvedOldPath)) {
+      return res.status(404).json({ status: 'error', message: 'Berkas atau folder asal tidak ditemukan.' });
+    }
+
+    if (fs.existsSync(resolvedNewPath)) {
+      return res.status(400).json({ status: 'error', message: 'Nama baru sudah digunakan.' });
+    }
+
+    // Proteksi berkas sistem
+    const oldFilename = path.basename(resolvedOldPath);
+    const systemFiles = ['.env', '.subly_status', 'index.php.bak', '.htaccess.bak'];
+    if (systemFiles.includes(oldFilename) || newName === '.env') {
+      return res.status(403).json({ status: 'error', message: 'Berkas sistem yang dilindungi tidak dapat diubah namanya.' });
+    }
+
+    fs.renameSync(resolvedOldPath, resolvedNewPath);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Berkas atau folder berhasil diubah namanya.'
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengubah nama berkas atau folder.',
+      error: error.message
+    });
+  }
+}
+
+export async function moveFileOrFolder(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+  const { path: relativePath, newPath } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  if (!relativePath || !newPath) {
+    return res.status(400).json({ status: 'error', message: 'Path asal dan path tujuan wajib ditentukan.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(subdomainId), userId, deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan atau bukan milik Anda.' });
+    }
+
+    const baseDir = getBaseDirectory(subdomain.docRoot);
+    const resolvedOldPath = safeResolvePath(baseDir, relativePath);
+    const resolvedNewPath = safeResolvePath(baseDir, newPath);
+
+    if (!fs.existsSync(resolvedOldPath)) {
+      return res.status(404).json({ status: 'error', message: 'Berkas atau folder asal tidak ditemukan.' });
+    }
+
+    if (fs.existsSync(resolvedNewPath)) {
+      return res.status(400).json({ status: 'error', message: 'Tujuan pemindahan sudah ada berkas dengan nama yang sama.' });
+    }
+
+    // Proteksi berkas sistem
+    const oldFilename = path.basename(resolvedOldPath);
+    if (oldFilename === '.env' || oldFilename === '.subly_status') {
+      return res.status(403).json({ status: 'error', message: 'Berkas sistem yang dilindungi tidak dapat dipindahkan.' });
+    }
+
+    fs.mkdirSync(path.dirname(resolvedNewPath), { recursive: true });
+    fs.renameSync(resolvedOldPath, resolvedNewPath);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Berkas atau folder berhasil dipindahkan.'
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal memindahkan berkas atau folder.',
+      error: error.message
+    });
+  }
+}
+
+export async function getFileContent(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+  const relativePath = req.query.path as string;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  if (!relativePath) {
+    return res.status(400).json({ status: 'error', message: 'Path berkas wajib ditentukan.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(subdomainId), userId, deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan atau bukan milik Anda.' });
+    }
+
+    const baseDir = getBaseDirectory(subdomain.docRoot);
+    const resolvedPath = safeResolvePath(baseDir, relativePath);
+
+    if (!fs.existsSync(resolvedPath)) {
+      return res.status(404).json({ status: 'error', message: 'Berkas tidak ditemukan.' });
+    }
+
+    const stat = fs.statSync(resolvedPath);
+    if (stat.isDirectory()) {
+      return res.status(400).json({ status: 'error', message: 'Tidak dapat membaca isi direktori.' });
+    }
+
+    // Baca berkas teks
+    const content = fs.readFileSync(resolvedPath, 'utf8');
+
+    return res.status(200).json({
+      success: true,
+      content
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal membaca isi berkas.',
+      error: error.message
+    });
+  }
+}
+
+export async function saveFileContent(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+  const { path: relativePath, content } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  if (!relativePath || content === undefined) {
+    return res.status(400).json({ status: 'error', message: 'Path berkas dan konten wajib ditentukan.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(subdomainId), userId, deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan atau bukan milik Anda.' });
+    }
+
+    const baseDir = getBaseDirectory(subdomain.docRoot);
+    const resolvedPath = safeResolvePath(baseDir, relativePath);
+
+    if (!fs.existsSync(resolvedPath)) {
+      return res.status(404).json({ status: 'error', message: 'Berkas tidak ditemukan.' });
+    }
+
+    // Proteksi penyimpanan .env jika secret atau dibatasi (opsional)
+    // Untuk kemudahan, kita ijinkan menyimpan, tapi jika dia file sistem kritis, bisa divalidasi.
+    fs.writeFileSync(resolvedPath, content, 'utf8');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Berkas berhasil disimpan.'
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal menyimpan berkas.',
+      error: error.message
+    });
+  }
+}
+
+export async function downloadFile(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+  const relativePath = req.query.path as string;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  if (!relativePath) {
+    return res.status(400).json({ status: 'error', message: 'Path berkas wajib ditentukan.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(subdomainId), userId, deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan atau bukan milik Anda.' });
+    }
+
+    const baseDir = getBaseDirectory(subdomain.docRoot);
+    const resolvedPath = safeResolvePath(baseDir, relativePath);
+
+    if (!fs.existsSync(resolvedPath)) {
+      return res.status(404).json({ status: 'error', message: 'Berkas tidak ditemukan.' });
+    }
+
+    const stat = fs.statSync(resolvedPath);
+    if (stat.isDirectory()) {
+      return res.status(400).json({ status: 'error', message: 'Tidak dapat mengunduh direktori.' });
+    }
+
+    return res.download(resolvedPath);
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengunduh berkas.',
+      error: error.message
+    });
+  }
+}
+

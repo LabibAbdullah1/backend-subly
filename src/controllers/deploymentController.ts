@@ -404,4 +404,54 @@ export async function rejectDeployment(req: AuthenticatedRequest, res: Response)
   }
 }
 
+export async function disconnectGit(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: {
+        id: BigInt(subdomainId),
+        userId: userId,
+        deletedAt: null
+      }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Subdomain tidak ditemukan atau bukan milik Anda.'
+      });
+    }
+
+    const updatedSubdomain = await prisma.subdomain.update({
+      where: { id: subdomain.id },
+      data: {
+        gitUrl: null,
+        gitBranch: null,
+        gitToken: null,
+        gitConnectedAt: null,
+        gitLastCommit: null
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Koneksi repositori Git berhasil diputuskan.',
+      data: serializeBigInt(updatedSubdomain)
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal memutuskan hubungan repositori Git.',
+      error: error.message
+    });
+  }
+}
+
 

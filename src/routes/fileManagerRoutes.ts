@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { authenticateJWT } from '../middleware/authMiddleware.js';
-import { listFiles, deleteFile, uploadFile, extractZip } from '../controllers/fileManagerController.js';
+import { listFiles, deleteFile, uploadFile, extractZip, createFileOrFolder, renameFileOrFolder, moveFileOrFolder, getFileContent, saveFileContent, downloadFile } from '../controllers/fileManagerController.js';
 
 const router = Router();
 
@@ -34,5 +34,13 @@ router.get('/subdomains/:id/file-manager', authenticateJWT, listFiles);
 router.delete('/subdomains/:id/file-manager', authenticateJWT, deleteFile);
 router.post('/subdomains/:id/file-manager/upload', authenticateJWT, upload.single('file'), uploadFile);
 router.post('/subdomains/:id/file-manager/extract', authenticateJWT, extractZip);
+
+// Advanced File Manager Routes
+router.post('/subdomains/:id/file-manager/create', authenticateJWT, createFileOrFolder);
+router.post('/subdomains/:id/file-manager/rename', authenticateJWT, renameFileOrFolder);
+router.post('/subdomains/:id/file-manager/move', authenticateJWT, moveFileOrFolder);
+router.get('/subdomains/:id/file-manager/content', authenticateJWT, getFileContent);
+router.post('/subdomains/:id/file-manager/save', authenticateJWT, saveFileContent);
+router.get('/subdomains/:id/file-manager/download', authenticateJWT, downloadFile);
 
 export default router;

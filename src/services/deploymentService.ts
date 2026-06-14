@@ -1,6 +1,6 @@
 import prisma from '../config/db.js';
 import { callCpanelApi } from './cpanelService.js';
-import { writeEnvFiles } from './envService.js';
+import { writeEnvFiles, syncEnvFileWithDatabase } from './envService.js';
 import path from 'path';
 import fs from 'fs';
 import AdmZip from 'adm-zip';
@@ -172,8 +172,8 @@ export async function validateAndDeployZip(params: {
     }
 
     // 6. Sinkronisasi Environment Variables (.env) ke docRoot
-    await writeEnvFiles(subdomain.id, docRoot);
-
+    await syncEnvFileWithDatabase(subdomain.id, docRoot);
+ 
     // 7. Simpan log/catatan deployment baru di DB
     const zipStat = fs.statSync(zipFilePath);
     
@@ -183,7 +183,7 @@ export async function validateAndDeployZip(params: {
       orderBy: { version: 'desc' }
     });
     const nextVersion = lastDeployment ? lastDeployment.version + 1 : 1;
-
+ 
     const deployment = await prisma.deployment.create({
       data: {
         subdomainId: subdomain.id,
@@ -191,31 +191,12 @@ export async function validateAndDeployZip(params: {
         zipSize: BigInt(zipStat.size),
         extractedSize: BigInt(totalExtractedSize),
         version: nextVersion,
-        status: 'success',
+        status: 'queued', // Awalnya berstatus queued (menunggu approval admin)
         notes: notes || `Deployment version ${nextVersion}`,
-        deployedAt: new Date()
+        deployedAt: null // Belum secara resmi dideploy sampai di-approve
       }
     });
-
-    // Perbarui status subdomain dan perpanjang expiredAt (auto-reactivate +30 hari untuk Free Tier)
-    const now = new Date();
-    const isFreePlan = plan.price === BigInt(0);
-    const updateData: any = {};
-
-    if (isFreePlan) {
-      updateData.expiredAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // +30 Hari
-      updateData.status = 'active';
-    } else if (subdomain.expiredAt && new Date(subdomain.expiredAt) > now) {
-      updateData.status = 'active';
-    }
-
-    if (Object.keys(updateData).length > 0) {
-      await prisma.subdomain.update({
-        where: { id: subdomain.id },
-        data: updateData
-      });
-    }
-
+ 
     return deployment;
 
   } finally {

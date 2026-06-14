@@ -154,6 +154,7 @@ import { encryptString, decryptString } from '../utils/crypto.js';
 import { serializeBigInt } from '../utils/serialize.js';
 import { getBaseDirectory, getDirectorySize } from '../services/fileManagerService.js';
 import { callCpanelApi } from '../services/cpanelService.js';
+import { syncEnvFileWithDatabase } from '../services/envService.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -476,6 +477,21 @@ export async function getUserSubdomains(req: AuthenticatedRequest, res: Response
     if (req.user?.role !== 'Admin') {
       whereClause.userId = BigInt(userId);
     }
+
+    // Jalankan sinkronisasi .env fisik untuk setiap subdomain milik user terlebih dahulu
+    const basicSubdomains = await prisma.subdomain.findMany({
+      where: whereClause,
+      select: { id: true, docRoot: true }
+    });
+
+    for (const sub of basicSubdomains) {
+      try {
+        await syncEnvFileWithDatabase(sub.id, sub.docRoot);
+      } catch (err: any) {
+        console.error(`[getUserSubdomains] Gagal sinkronisasi env untuk subdomain ID ${sub.id.toString()}:`, err.message);
+      }
+    }
+
     const subdomains = await prisma.subdomain.findMany({
       where: whereClause,
       include: {

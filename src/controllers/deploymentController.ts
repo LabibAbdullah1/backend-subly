@@ -270,15 +270,15 @@ export async function triggerSubdomainDeploy(req: AuthenticatedRequest, res: Res
           zipSize: lastDeployment?.zipSize || BigInt(0),
           extractedSize: lastDeployment?.extractedSize || BigInt(0),
           version: nextVersion,
-          status: 'success',
+          status: 'queued', // Menunggu persetujuan admin
           notes: `Manual Redeploy (ZIP) v${nextVersion}`,
-          deployedAt: new Date()
+          deployedAt: null // Di-set ketika disetujui oleh admin
         }
       });
 
       return res.status(200).json({
         success: true,
-        message: 'Redeploy manual berhasil.',
+        message: 'Redeploy manual berhasil diajukan dan menunggu persetujuan.',
         data: serializeBigInt(deployment)
       });
     }
@@ -294,7 +294,7 @@ export async function triggerSubdomainDeploy(req: AuthenticatedRequest, res: Res
 
     return res.status(200).json({
       success: true,
-      message: 'Redeploy manual dari Git berhasil.',
+      message: 'Redeploy manual dari Git berhasil diajukan dan menunggu persetujuan.',
       data: serializeBigInt(deployment)
     });
 
@@ -306,4 +306,99 @@ export async function triggerSubdomainDeploy(req: AuthenticatedRequest, res: Res
     });
   }
 }
+
+export async function approveDeployment(req: AuthenticatedRequest, res: Response) {
+  const { id } = req.params;
+  const { adminNote } = req.body;
+
+  try {
+    const deployment = await prisma.deployment.findUnique({
+      where: { id: BigInt(id) },
+      include: { subdomain: true }
+    });
+
+    if (!deployment) {
+      return res.status(404).json({ status: 'error', message: 'Deployment tidak ditemukan.' });
+    }
+
+    const updatedDeployment = await prisma.deployment.update({
+      where: { id: deployment.id },
+      data: {
+        status: 'success',
+        adminNote: adminNote || null,
+        deployedAt: new Date()
+      }
+    });
+
+    // Update status subdomain menjadi active dan perpanjang masa aktif jika free plan
+    const lastPayment = await prisma.payment.findFirst({
+      where: { subdomainId: deployment.subdomainId, status: 'success', deletedAt: null },
+      include: { plan: true },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (lastPayment) {
+      const plan = lastPayment.plan;
+      const isFreePlan = plan.price === BigInt(0);
+      const updateData: any = { status: 'active' };
+
+      if (isFreePlan) {
+        updateData.expiredAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // +30 Hari
+      }
+
+      await prisma.subdomain.update({
+        where: { id: deployment.subdomainId },
+        data: updateData
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Deployment berhasil disetujui.',
+      data: serializeBigInt(updatedDeployment)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal menyetujui deployment.',
+      error: error.message
+    });
+  }
+}
+
+export async function rejectDeployment(req: AuthenticatedRequest, res: Response) {
+  const { id } = req.params;
+  const { adminNote } = req.body;
+
+  try {
+    const deployment = await prisma.deployment.findUnique({
+      where: { id: BigInt(id) }
+    });
+
+    if (!deployment) {
+      return res.status(404).json({ status: 'error', message: 'Deployment tidak ditemukan.' });
+    }
+
+    const updatedDeployment = await prisma.deployment.update({
+      where: { id: deployment.id },
+      data: {
+        status: 'error',
+        adminNote: adminNote || 'Ditolak oleh Admin.'
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Deployment berhasil ditolak.',
+      data: serializeBigInt(updatedDeployment)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal menolak deployment.',
+      error: error.message
+    });
+  }
+}
+
 

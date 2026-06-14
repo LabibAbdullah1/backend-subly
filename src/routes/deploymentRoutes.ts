@@ -2,8 +2,8 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { authenticateJWT } from '../middleware/authMiddleware.js';
-import { uploadChunk, checkGitRepository, connectGit, triggerSubdomainDeploy } from '../controllers/deploymentController.js';
+import { authenticateJWT, requireRole } from '../middleware/authMiddleware.js';
+import { uploadChunk, checkGitRepository, connectGit, triggerSubdomainDeploy, approveDeployment, rejectDeployment } from '../controllers/deploymentController.js';
 
 const router = Router();
 
@@ -38,5 +38,9 @@ router.post('/deployments/upload-chunk', authenticateJWT, uploadChunkMulter.sing
 router.post('/subdomains/git/check-repository', authenticateJWT, checkGitRepository);
 router.post('/subdomains/:id/git/connect', authenticateJWT, connectGit);
 router.post('/subdomains/:id/deploy', authenticateJWT, triggerSubdomainDeploy);
+
+// Rute Deployment Approval & Rejection (Admin Only)
+router.post('/deployments/:id/approve', authenticateJWT, requireRole(['Admin']), approveDeployment);
+router.post('/deployments/:id/reject', authenticateJWT, requireRole(['Admin']), rejectDeployment);
 
 export default router;

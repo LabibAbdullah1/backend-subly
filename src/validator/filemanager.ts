@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
 export const DeleteFileSchema = z.object({
-  path: z.string().min(1, 'Path file/folder wajib ditentukan.')
+  path: z.string().optional(),
+  paths: z.array(z.string()).optional()
+}).refine(data => data.path || data.paths, {
+  message: 'Path atau paths file/folder wajib ditentukan.'
 });

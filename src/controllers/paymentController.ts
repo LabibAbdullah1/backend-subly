@@ -30,6 +30,42 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
       return res.status(404).json({ status: 'error', message: 'Paket hosting tidak ditemukan atau tidak aktif.' });
     }
 
+    // Batasi checkout Free Tier (maksimal 1 subdomain gratis aktif atau 1 transaksi gratis belum terpakai)
+    if (plan.price === BigInt(0)) {
+      const existingFreeSubdomain = await prisma.subdomain.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          payments: {
+            some: {
+              plan: {
+                price: BigInt(0)
+              },
+              status: 'success'
+            }
+          }
+        }
+      });
+
+      const existingUnusedFreePayment = await prisma.payment.findFirst({
+        where: {
+          userId,
+          status: 'success',
+          subdomainId: null,
+          plan: {
+            price: BigInt(0)
+          }
+        }
+      });
+
+      if (existingFreeSubdomain || existingUnusedFreePayment) {
+        return res.status(422).json({
+          status: 'error',
+          message: 'Anda hanya diperbolehkan memiliki 1 paket subdomain gratis yang aktif.'
+        });
+      }
+    }
+
     let finalPrice = plan.price; // BigInt
     let voucherId: bigint | null = null;
 

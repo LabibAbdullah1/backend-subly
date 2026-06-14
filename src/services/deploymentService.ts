@@ -197,6 +197,25 @@ export async function validateAndDeployZip(params: {
       }
     });
 
+    // Perbarui status subdomain dan perpanjang expiredAt (auto-reactivate +30 hari untuk Free Tier)
+    const now = new Date();
+    const isFreePlan = plan.price === BigInt(0);
+    const updateData: any = {};
+
+    if (isFreePlan) {
+      updateData.expiredAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // +30 Hari
+      updateData.status = 'active';
+    } else if (subdomain.expiredAt && new Date(subdomain.expiredAt) > now) {
+      updateData.status = 'active';
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      await prisma.subdomain.update({
+        where: { id: subdomain.id },
+        data: updateData
+      });
+    }
+
     return deployment;
 
   } finally {

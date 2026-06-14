@@ -101,7 +101,33 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
+async function seedFreePlan() {
+  try {
+    const freePlan = await prisma.plan.findFirst({
+      where: { price: BigInt(0), deletedAt: null }
+    });
+    if (!freePlan) {
+      await prisma.plan.create({
+        data: {
+          name: 'Free Tier',
+          type: 'PHP',
+          isActive: true,
+          price: BigInt(0),
+          durationMonths: 1,
+          maxStorageMb: 100,
+          maxDatabases: 1,
+          description: 'Paket gratis selamanya untuk Native HTML & PHP dengan 1 Database MySQL.'
+        }
+      });
+      console.log('✔ Seeded Free Tier plan successfully.');
+    }
+  } catch (err) {
+    console.error('Failed to seed Free Tier plan:', err);
+  }
+}
+
 // Start Server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
+  await seedFreePlan();
 });

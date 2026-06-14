@@ -106,28 +106,20 @@ export async function getPublicTestimonials(req: AuthenticatedRequest, res: Resp
   try {
     const testimonials = await prisma.testimonial.findMany({
       where: {
-        status: { in: ['approved', 'featured'] },
+        status: 'featured',
         deletedAt: null
       },
       include: {
         user: { select: { name: true } }
       },
       orderBy: [
-        { status: 'asc' }, // featured comes first alphabetically... use createdAt instead
         { createdAt: 'desc' }
       ],
       take: 20
     });
 
-    // Sort: featured dulu, lalu approved
-    const sorted = [...testimonials].sort((a, b) => {
-      if (a.status === 'featured' && b.status !== 'featured') return -1;
-      if (b.status === 'featured' && a.status !== 'featured') return 1;
-      return 0;
-    });
-
     // Ambil info subdomain
-    const subdomainIds = sorted
+    const subdomainIds = testimonials
       .map(t => t.subdomainId)
       .filter((id): id is bigint => id !== null);
 
@@ -137,7 +129,7 @@ export async function getPublicTestimonials(req: AuthenticatedRequest, res: Resp
     });
     const subdomainMap = Object.fromEntries(subdomains.map(s => [s.id.toString(), s]));
 
-    const enriched = sorted.map(t => ({
+    const enriched = testimonials.map(t => ({
       id: t.id,
       rating: t.rating,
       title: t.title,

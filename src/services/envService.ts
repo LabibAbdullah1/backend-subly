@@ -327,18 +327,21 @@ foreach ($files as $file) {
     break;
 }
 
-if (!$hasClientFiles) {
+$clientHtml = null;
+if (file_exists('index.html')) {
+    $clientHtml = 'index.html';
+} elseif (file_exists('index.htm')) {
+    $clientHtml = 'index.htm';
+}
+
+if (!$hasClientFiles || !$clientHtml) {
     ?>
     ${welcomeHtml}
     <?php
     exit;
 } else {
-    // Jika ada index.html milik klien, sertakan
-    if (file_exists('index.html')) {
-        include 'index.html';
-        exit;
-    }
-    // Jika tidak ada index.html, biarkan Apache merender directory index atau file lainnya
+    include $clientHtml;
+    exit;
 }
 ?>`;
 

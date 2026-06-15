@@ -22,7 +22,6 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
   }
 
   try {
-    // Cari plan
     const plan = await prisma.plan.findFirst({
       where: { id: BigInt(planId), isActive: true, deletedAt: null }
     });
@@ -33,7 +32,6 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
 
     let targetSubdomainId: bigint | null = subdomainId ? BigInt(subdomainId) : null;
 
-    // Verifikasi subdomain kepemilikan jika ada subdomainId
     if (targetSubdomainId) {
       const subdomain = await prisma.subdomain.findFirst({
         where: { id: targetSubdomainId, userId, deletedAt: null }
@@ -43,21 +41,24 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
       }
     }
 
-    let finalPrice = plan.price; // BigInt
-    let sizeMb = 0;
+    let finalPrice = plan.price;
+    const sizeMb = diskUpgradeSizeMb ? parseInt(diskUpgradeSizeMb.toString(), 10) : 0;
 
     if (isDiskUpgrade) {
-      sizeMb = diskUpgradeSizeMb ? parseInt(diskUpgradeSizeMb.toString(), 10) : 0;
       if (isNaN(sizeMb) || sizeMb <= 0) {
         return res.status(422).json({ status: 'error', message: 'Kapasitas penyimpanan tambahan harus lebih dari 0 MB.' });
       }
       if (!targetSubdomainId) {
         return res.status(422).json({ status: 'error', message: 'Subdomain ID wajib diisi untuk upgrade disk.' });
       }
-      // Rp 10 per MB
-      finalPrice = BigInt(sizeMb * 10);
+      
+      const priceSetting = await prisma.setting.findUnique({
+        where: { key: 'system_disk_upgrade_price_per_gb' }
+      });
+      const pricePerGb = priceSetting?.value ? parseInt(priceSetting.value, 10) : 10000;
+      const pricePerMb = pricePerGb / 1024;
+      finalPrice = BigInt(Math.round(sizeMb * pricePerMb));
     } else {
-      // Batasi checkout Free Tier (maksimal 1 subdomain gratis aktif atau 1 transaksi gratis belum terpakai)
       if (plan.price === BigInt(0)) {
         const existingFreeSubdomain = await prisma.subdomain.findFirst({
           where: {
@@ -96,7 +97,6 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
 
     let voucherId: bigint | null = null;
 
-    // Jika menggunakan voucher
     if (voucherCode) {
       const voucher = await prisma.voucher.findUnique({
         where: { code: voucherCode.toUpperCase() }
@@ -106,12 +106,10 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
         return res.status(422).json({ status: 'error', message: 'Kode voucher tidak valid.' });
       }
 
-      // Verifikasi kedaluwarsa voucher
       if (voucher.expiresAt && new Date(voucher.expiresAt) < new Date()) {
         return res.status(422).json({ status: 'error', message: 'Kode voucher sudah kedaluwarsa.' });
       }
 
-      // Verifikasi limit penggunaan
       if (voucher.usageLimit !== null) {
         const usageCount = await prisma.payment.count({
           where: { voucherId: voucher.id, status: 'success' }
@@ -121,13 +119,11 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
         }
       }
 
-      // Hitung diskon
       let discountAmount = BigInt(0);
       if (voucher.type === 'percent') {
         const rewardPercent = parseFloat(voucher.rewardAmount.toString());
         discountAmount = (finalPrice * BigInt(Math.round(rewardPercent))) / BigInt(100);
       } else {
-        // fixed diskon
         discountAmount = BigInt(Math.round(parseFloat(voucher.rewardAmount.toString())));
       }
 
@@ -145,7 +141,6 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
       ? `DISK-${sizeMb}-PAY-${Date.now()}-${userId}` 
       : `PAY-${Date.now()}-${userId}`;
 
-    // Jika finalPrice = 0 (Gratis 100%), langsung sukses
     if (finalPrice === BigInt(0)) {
       paymentStatus = 'success';
 
@@ -163,7 +158,6 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
         }
       });
 
-      // Jika ini adalah perpanjangan (renew) dan subdomain_id diisi, langsung update subdomain
       if (targetSubdomainId && !isDiskUpgrade) {
         const subdomain = await prisma.subdomain.findUnique({
           where: { id: targetSubdomainId }
@@ -185,7 +179,6 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
 
           await writeDefaultSubdomainFiles(subdomain.docRoot, 'active');
 
-          // Kirim chat notifikasi otomatis
           await prisma.chat.create({
             data: {
               userId,
@@ -204,15 +197,13 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
       });
     }
 
-    // Jika harga > 0, generate kode unik 3 digit (kecuali upgrade disk)
     if (!isDiskUpgrade) {
-      // Cari jika user tersebut memiliki cache/pending kode unik sebelumnya untuk reuse
       const existingPending = await prisma.payment.findFirst({
         where: {
           userId,
           status: 'pending',
           createdAt: {
-            gte: new Date(Date.now() - 1 * 60 * 60 * 1000) // Masih berlaku dalam 1 jam
+            gte: new Date(Date.now() - 1 * 60 * 60 * 1000)
           }
         },
         orderBy: { createdAt: 'desc' }
@@ -221,7 +212,6 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
       if (existingPending && existingPending.uniqueCode) {
         uniqueCode = existingPending.uniqueCode;
       } else {
-        // Generate 100 - 999
         uniqueCode = Math.floor(100 + Math.random() * 900);
       }
     }
@@ -246,18 +236,17 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
       message: 'Checkout berhasil. Silakan lakukan transfer sesuai nominal tagihan.',
       data: serializeBigInt({
         ...payment,
-        expiresInSeconds: 3600 // 1 Jam
+        expiresInSeconds: 3600
       })
     });
-  } catch (error: any) {
+  } catch (error) {
     return res.status(500).json({
       status: 'error',
       message: 'Gagal melakukan checkout pembayaran.',
-      error: error.message
+      error: error instanceof Error ? error.message : String(error)
     });
   }
 }
-
 // 2. Upload Bukti Pembayaran (Client only)
 export async function uploadProofFile(req: AuthenticatedRequest, res: Response) {
   const { id } = req.params;

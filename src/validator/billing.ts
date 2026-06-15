@@ -26,5 +26,7 @@ export const VerifyVoucherSchema = z.object({
 export const CheckoutSchema = z.object({
   planId: z.union([z.number().int(), z.string()]),
   voucherCode: z.string().optional(),
-  subdomainId: z.union([z.number().int(), z.string()]).optional()
+  subdomainId: z.union([z.number().int(), z.string()]).optional(),
+  isDiskUpgrade: z.boolean().optional(),
+  diskUpgradeSizeMb: z.union([z.number().int(), z.string()]).optional()
 });

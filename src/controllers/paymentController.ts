@@ -14,7 +14,7 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
     return res.status(422).json({ errors: validation.error.format() });
   }
 
-  const { planId, voucherCode, subdomainId } = validation.data;
+  const { planId, voucherCode, subdomainId, isDiskUpgrade, diskUpgradeSizeMb } = validation.data;
   const userId = req.user?.id;
 
   if (!userId) {
@@ -31,43 +31,69 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
       return res.status(404).json({ status: 'error', message: 'Paket hosting tidak ditemukan atau tidak aktif.' });
     }
 
-    // Batasi checkout Free Tier (maksimal 1 subdomain gratis aktif atau 1 transaksi gratis belum terpakai)
-    if (plan.price === BigInt(0)) {
-      const existingFreeSubdomain = await prisma.subdomain.findFirst({
-        where: {
-          userId,
-          deletedAt: null,
-          payments: {
-            some: {
-              plan: {
-                price: BigInt(0)
-              },
-              status: 'success'
-            }
-          }
-        }
-      });
+    let targetSubdomainId: bigint | null = subdomainId ? BigInt(subdomainId) : null;
 
-      const existingUnusedFreePayment = await prisma.payment.findFirst({
-        where: {
-          userId,
-          status: 'success',
-          subdomainId: null,
-          plan: {
-            price: BigInt(0)
-          }
-        }
+    // Verifikasi subdomain kepemilikan jika ada subdomainId
+    if (targetSubdomainId) {
+      const subdomain = await prisma.subdomain.findFirst({
+        where: { id: targetSubdomainId, userId, deletedAt: null }
       });
-
-      if (existingFreeSubdomain || existingUnusedFreePayment) {
-        return res.status(422).json({
-          status: 'error',
-          message: 'Anda hanya diperbolehkan memiliki 1 paket subdomain gratis yang aktif.'
-        });
+      if (!subdomain) {
+        return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan.' });
       }
     }
 
     let finalPrice = plan.price; // BigInt
+    let sizeMb = 0;
+
+    if (isDiskUpgrade) {
+      sizeMb = diskUpgradeSizeMb ? parseInt(diskUpgradeSizeMb.toString(), 10) : 0;
+      if (isNaN(sizeMb) || sizeMb <= 0) {
+        return res.status(422).json({ status: 'error', message: 'Kapasitas penyimpanan tambahan harus lebih dari 0 MB.' });
+      }
+      if (!targetSubdomainId) {
+        return res.status(422).json({ status: 'error', message: 'Subdomain ID wajib diisi untuk upgrade disk.' });
+      }
+      // Rp 10 per MB
+      finalPrice = BigInt(sizeMb * 10);
+    } else {
+      // Batasi checkout Free Tier (maksimal 1 subdomain gratis aktif atau 1 transaksi gratis belum terpakai)
+      if (plan.price === BigInt(0)) {
+        const existingFreeSubdomain = await prisma.subdomain.findFirst({
+          where: {
+            userId,
+            deletedAt: null,
+            payments: {
+              some: {
+                plan: {
+                  price: BigInt(0)
+                },
+                status: 'success'
+              }
+            }
+          }
+        });
+
+        const existingUnusedFreePayment = await prisma.payment.findFirst({
+          where: {
+            userId,
+            status: 'success',
+            subdomainId: null,
+            plan: {
+              price: BigInt(0)
+            }
+          }
+        });
+
+        if (existingFreeSubdomain || existingUnusedFreePayment) {
+          return res.status(422).json({
+            status: 'error',
+            message: 'Anda hanya diperbolehkan memiliki 1 paket subdomain gratis yang aktif.'
+          });
+        }
+      }
+    }
+
     let voucherId: bigint | null = null;
 
     // Jika menggunakan voucher
@@ -115,10 +141,9 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
 
     let uniqueCode: number | null = null;
     let paymentStatus: 'pending' | 'success' = 'pending';
-    let transactionId = `PAY-${Date.now()}-${userId}`;
-
-    // Cari target subdomain jika renewal
-    let targetSubdomainId: bigint | null = subdomainId ? BigInt(subdomainId) : null;
+    let transactionId = isDiskUpgrade 
+      ? `DISK-${sizeMb}-PAY-${Date.now()}-${userId}` 
+      : `PAY-${Date.now()}-${userId}`;
 
     // Jika finalPrice = 0 (Gratis 100%), langsung sukses
     if (finalPrice === BigInt(0)) {
@@ -139,7 +164,7 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
       });
 
       // Jika ini adalah perpanjangan (renew) dan subdomain_id diisi, langsung update subdomain
-      if (targetSubdomainId) {
+      if (targetSubdomainId && !isDiskUpgrade) {
         const subdomain = await prisma.subdomain.findUnique({
           where: { id: targetSubdomainId }
         });
@@ -174,32 +199,34 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
 
       return res.status(201).json({
         success: true,
-        message: 'Checkout sukses (Voucher Gratis 100%).',
+        message: 'Checkout sukses (Gratis 100%).',
         data: serializeBigInt(payment)
       });
     }
 
-    // Jika harga > 0, generate kode unik 3 digit
-    // Cari jika user tersebut memiliki cache/pending kode unik sebelumnya untuk reuse
-    const existingPending = await prisma.payment.findFirst({
-      where: {
-        userId,
-        status: 'pending',
-        createdAt: {
-          gte: new Date(Date.now() - 1 * 60 * 60 * 1000) // Masih berlaku dalam 1 jam
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    // Jika harga > 0, generate kode unik 3 digit (kecuali upgrade disk)
+    if (!isDiskUpgrade) {
+      // Cari jika user tersebut memiliki cache/pending kode unik sebelumnya untuk reuse
+      const existingPending = await prisma.payment.findFirst({
+        where: {
+          userId,
+          status: 'pending',
+          createdAt: {
+            gte: new Date(Date.now() - 1 * 60 * 60 * 1000) // Masih berlaku dalam 1 jam
+          }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
 
-    if (existingPending && existingPending.uniqueCode) {
-      uniqueCode = existingPending.uniqueCode;
-    } else {
-      // Generate 100 - 999
-      uniqueCode = Math.floor(100 + Math.random() * 900);
+      if (existingPending && existingPending.uniqueCode) {
+        uniqueCode = existingPending.uniqueCode;
+      } else {
+        // Generate 100 - 999
+        uniqueCode = Math.floor(100 + Math.random() * 900);
+      }
     }
 
-    const finalAmount = finalPrice + BigInt(uniqueCode);
+    const finalAmount = uniqueCode ? (finalPrice + BigInt(uniqueCode)) : finalPrice;
 
     const payment = await prisma.payment.create({
       data: {
@@ -216,7 +243,7 @@ export async function checkout(req: AuthenticatedRequest, res: Response) {
 
     return res.status(201).json({
       success: true,
-      message: 'Checkout berhasil. Silakan lakukan transfer sesuai nominal tagihan beserta kode unik.',
+      message: 'Checkout berhasil. Silakan lakukan transfer sesuai nominal tagihan.',
       data: serializeBigInt({
         ...payment,
         expiresInSeconds: 3600 // 1 Jam
@@ -349,35 +376,65 @@ export async function confirmPayment(req: AuthenticatedRequest, res: Response) {
       data: { status: 'success' }
     });
 
-    // 2. Jika ada subdomain yang ditautkan, perpanjang masa aktifnya
+    // 2. Jika ada subdomain yang ditautkan
     if (payment.subdomainId && payment.subdomain) {
-      const planDurationMonths = payment.plan.durationMonths;
-      const currentExpired = payment.subdomain.expiredAt ? new Date(payment.subdomain.expiredAt) : new Date();
+      const isDiskUpgrade = payment.transactionId ? payment.transactionId.startsWith('DISK-') : false;
 
-      // Jika subdomain sudah expired, perpanjangan dimulai dari waktu sekarang
-      const baseDate = currentExpired > new Date() ? currentExpired : new Date();
-      const newExpired = new Date(baseDate);
-      newExpired.setMonth(newExpired.getMonth() + planDurationMonths);
+      if (isDiskUpgrade && payment.transactionId) {
+        // Disk upgrade: Tambah kapasitas storageOverrideMb
+        // Format: DISK-{sizeMb}-PAY-...
+        const parts = payment.transactionId.split('-');
+        const addedMb = parseInt(parts[1], 10) || 0;
 
-      await prisma.subdomain.update({
-        where: { id: payment.subdomainId },
-        data: {
-          expiredAt: newExpired,
-          status: 'active'
-        }
-      });
+        const currentOverride = payment.subdomain.storageOverrideMb || payment.plan.maxStorageMb;
+        const newOverride = currentOverride + addedMb;
 
-      await writeDefaultSubdomainFiles(payment.subdomain.docRoot, 'active');
+        await prisma.subdomain.update({
+          where: { id: payment.subdomainId },
+          data: {
+            storageOverrideMb: newOverride
+          }
+        });
 
-      // 3. Kirim notifikasi chat ke client
-      await prisma.chat.create({
-        data: {
-          userId: payment.userId,
-          isAdmin: true,
-          message: `Sistem: Pembayaran tagihan ${payment.transactionId} telah diverifikasi oleh Admin. Masa aktif subdomain ${payment.subdomain.fullDomain} berhasil diperpanjang hingga ${newExpired.toLocaleDateString('id-ID')}. Terima kasih!`,
-          isRead: false
-        }
-      });
+        // 3. Kirim notifikasi chat ke client
+        await prisma.chat.create({
+          data: {
+            userId: payment.userId,
+            isAdmin: true,
+            message: `Sistem: Pembayaran tagihan ${payment.transactionId} untuk upgrade penyimpanan telah diverifikasi. Kapasitas penyimpanan subdomain ${payment.subdomain.fullDomain} berhasil ditingkatkan sebesar +${addedMb} MB (Total: ${newOverride} MB). Terima kasih!`,
+            isRead: false
+          }
+        });
+      } else {
+        // Perpanjangan paket (Plan Renewal / Upgrade)
+        const planDurationMonths = payment.plan.durationMonths;
+        const currentExpired = payment.subdomain.expiredAt ? new Date(payment.subdomain.expiredAt) : new Date();
+
+        // Jika subdomain sudah expired, perpanjangan dimulai dari waktu sekarang
+        const baseDate = currentExpired > new Date() ? currentExpired : new Date();
+        const newExpired = new Date(baseDate);
+        newExpired.setMonth(newExpired.getMonth() + planDurationMonths);
+
+        await prisma.subdomain.update({
+          where: { id: payment.subdomainId },
+          data: {
+            expiredAt: newExpired,
+            status: 'active'
+          }
+        });
+
+        await writeDefaultSubdomainFiles(payment.subdomain.docRoot, 'active');
+
+        // 3. Kirim notifikasi chat ke client
+        await prisma.chat.create({
+          data: {
+            userId: payment.userId,
+            isAdmin: true,
+            message: `Sistem: Pembayaran tagihan ${payment.transactionId} telah diverifikasi oleh Admin. Masa aktif subdomain ${payment.subdomain.fullDomain} berhasil diperpanjang hingga ${newExpired.toLocaleDateString('id-ID')}. Terima kasih!`,
+            isRead: false
+          }
+        });
+      }
     }
 
     return res.status(200).json({
@@ -519,34 +576,65 @@ export async function verifyViaEmail(req: any, res: Response) {
       data: { status: 'success' }
     });
 
-    // 2. Jika ada subdomain yang ditautkan, perpanjang masa aktifnya
+    // 2. Jika ada subdomain yang ditautkan
     if (payment.subdomainId && payment.subdomain) {
-      const planDurationMonths = payment.plan.durationMonths;
-      const currentExpired = payment.subdomain.expiredAt ? new Date(payment.subdomain.expiredAt) : new Date();
+      const isDiskUpgrade = payment.transactionId ? payment.transactionId.startsWith('DISK-') : false;
 
-      const baseDate = currentExpired > new Date() ? currentExpired : new Date();
-      const newExpired = new Date(baseDate);
-      newExpired.setMonth(newExpired.getMonth() + planDurationMonths);
+      if (isDiskUpgrade && payment.transactionId) {
+        // Disk upgrade: Tambah kapasitas storageOverrideMb
+        // Format: DISK-{sizeMb}-PAY-...
+        const parts = payment.transactionId.split('-');
+        const addedMb = parseInt(parts[1], 10) || 0;
 
-      await prisma.subdomain.update({
-        where: { id: payment.subdomainId },
-        data: {
-          expiredAt: newExpired,
-          status: 'active'
-        }
-      });
+        const currentOverride = payment.subdomain.storageOverrideMb || payment.plan.maxStorageMb;
+        const newOverride = currentOverride + addedMb;
 
-      await writeDefaultSubdomainFiles(payment.subdomain.docRoot, 'active');
+        await prisma.subdomain.update({
+          where: { id: payment.subdomainId },
+          data: {
+            storageOverrideMb: newOverride
+          }
+        });
 
-      // 3. Kirim notifikasi chat ke client
-      await prisma.chat.create({
-        data: {
-          userId: payment.userId,
-          isAdmin: true,
-          message: `Sistem: Pembayaran tagihan ${payment.transactionId} telah diverifikasi via Email oleh Admin. Masa aktif subdomain ${payment.subdomain.fullDomain} berhasil diperpanjang hingga ${newExpired.toLocaleDateString('id-ID')}. Terima kasih!`,
-          isRead: false
-        }
-      });
+        // 3. Kirim notifikasi chat ke client
+        await prisma.chat.create({
+          data: {
+            userId: payment.userId,
+            isAdmin: true,
+            message: `Sistem: Pembayaran tagihan ${payment.transactionId} untuk upgrade penyimpanan telah diverifikasi via Email oleh Admin. Kapasitas penyimpanan subdomain ${payment.subdomain.fullDomain} berhasil ditingkatkan sebesar +${addedMb} MB (Total: ${newOverride} MB). Terima kasih!`,
+            isRead: false
+          }
+        });
+      } else {
+        // Perpanjangan paket (Plan Renewal / Upgrade)
+        const planDurationMonths = payment.plan.durationMonths;
+        const currentExpired = payment.subdomain.expiredAt ? new Date(payment.subdomain.expiredAt) : new Date();
+
+        // Jika subdomain sudah expired, perpanjangan dimulai dari waktu sekarang
+        const baseDate = currentExpired > new Date() ? currentExpired : new Date();
+        const newExpired = new Date(baseDate);
+        newExpired.setMonth(newExpired.getMonth() + planDurationMonths);
+
+        await prisma.subdomain.update({
+          where: { id: payment.subdomainId },
+          data: {
+            expiredAt: newExpired,
+            status: 'active'
+          }
+        });
+
+        await writeDefaultSubdomainFiles(payment.subdomain.docRoot, 'active');
+
+        // 3. Kirim notifikasi chat ke client
+        await prisma.chat.create({
+          data: {
+            userId: payment.userId,
+            isAdmin: true,
+            message: `Sistem: Pembayaran tagihan ${payment.transactionId} telah diverifikasi via Email oleh Admin. Masa aktif subdomain ${payment.subdomain.fullDomain} berhasil diperpanjang hingga ${newExpired.toLocaleDateString('id-ID')}. Terima kasih!`,
+            isRead: false
+          }
+        });
+      }
     }
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';

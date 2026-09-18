@@ -23,8 +23,8 @@ export function getBaseDirectory(docRoot: string): string {
 }
 
 export function safeResolvePath(baseDir: string, relativePath: string): string {
-  // Ganti backslash ke slash jika dari Windows client request
-  const cleanRelative = (relativePath || '').replace(/\\/g, '/');
+  // Ganti backslash ke slash dan hapus leading slashes agar relatif terhadap baseDir
+  const cleanRelative = (relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
   
   // Normalisasi path gabungan
   const resolvedPath = path.resolve(baseDir, cleanRelative);

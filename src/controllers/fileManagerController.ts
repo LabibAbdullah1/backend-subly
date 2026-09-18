@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { getBaseDirectory, safeResolvePath, formatBytes, FileItem } from '../services/fileManagerService.js';
 import { DeleteFileSchema } from '../validator/filemanager.js';
 import { callCpanelApi } from '../services/cpanelService.js';
+import { serializeBigInt } from '../utils/serialize.js';
 import fs from 'fs';
 import path from 'path';
 import AdmZip from 'adm-zip';
@@ -658,7 +659,7 @@ export async function getFileContent(req: AuthenticatedRequest, res: Response) {
 export async function saveFileContent(req: AuthenticatedRequest, res: Response) {
   const subdomainId = req.params.id;
   const userId = req.user?.id;
-  const { path: relativePath, content } = req.body;
+  const { path: relativePath, content, logMessage } = req.body;
 
   if (!userId) {
     return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
@@ -684,18 +685,67 @@ export async function saveFileContent(req: AuthenticatedRequest, res: Response) 
       return res.status(404).json({ status: 'error', message: 'Berkas tidak ditemukan.' });
     }
 
-    // Proteksi penyimpanan .env jika secret atau dibatasi (opsional)
-    // Untuk kemudahan, kita ijinkan menyimpan, tapi jika dia file sistem kritis, bisa divalidasi.
+    // Proteksi berkas sistem kritis
+    const filename = path.basename(resolvedPath);
+    if (filename === '.subly_status' || filename === 'index.php.bak' || filename === '.htaccess.bak') {
+      return res.status(403).json({ status: 'error', message: 'Berkas sistem yang dilindungi tidak dapat diubah.' });
+    }
+
     fs.writeFileSync(resolvedPath, content, 'utf8');
+
+    // Catat file log commit perubahan
+    const messageToSave = logMessage && logMessage.trim() ? logMessage.trim() : `Perubahan pada ${filename}`;
+    await (prisma as any).fileLog.create({
+      data: {
+        subdomainId: subdomain.id,
+        filePath: relativePath,
+        logMessage: messageToSave
+      }
+    });
 
     return res.status(200).json({
       success: true,
-      message: 'Berkas berhasil disimpan.'
+      message: 'Berkas berhasil disimpan dan log perubahan berhasil dicatat.'
     });
   } catch (error: any) {
     return res.status(500).json({
       status: 'error',
       message: 'Gagal menyimpan berkas.',
+      error: error.message
+    });
+  }
+}
+
+export async function getFileLogs(req: AuthenticatedRequest, res: Response) {
+  const subdomainId = req.params.id;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ status: 'error', message: 'Akses ditolak.' });
+  }
+
+  try {
+    const subdomain = await prisma.subdomain.findFirst({
+      where: { id: BigInt(subdomainId), userId, deletedAt: null }
+    });
+
+    if (!subdomain) {
+      return res.status(404).json({ status: 'error', message: 'Subdomain tidak ditemukan atau bukan milik Anda.' });
+    }
+
+    const logs = await (prisma as any).fileLog.findMany({
+      where: { subdomainId: subdomain.id },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: serializeBigInt(logs)
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil log perubahan berkas.',
       error: error.message
     });
   }

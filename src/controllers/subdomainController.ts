@@ -535,20 +535,23 @@ export async function getUserSubdomains(req: AuthenticatedRequest, res: Response
     });
 
     const decryptedSubdomains = subdomains.map((sub) => {
-      const decryptedDatabases = sub.databases.map((db) => {
-        let plainPassword = db.dbPassword;
-        if (db.dbPassword) {
-          try {
-            plainPassword = decryptString(db.dbPassword);
-          } catch (err) {
-            console.error(`Failed to decrypt password for database ${db.dbName}:`, err);
-          }
-        }
-        return {
-          ...db,
-          dbPassword: plainPassword
-        };
-      });
+      const isSubActive = sub.status === 'active';
+      const decryptedDatabases = isSubActive
+        ? sub.databases.map((db) => {
+            let plainPassword = db.dbPassword;
+            if (db.dbPassword) {
+              try {
+                plainPassword = decryptString(db.dbPassword);
+              } catch (err) {
+                console.error(`Failed to decrypt password for database ${db.dbName}:`, err);
+              }
+            }
+            return {
+              ...db,
+              dbPassword: plainPassword
+            };
+          })
+        : []; // Sembunyikan database jika subdomain tidak aktif/expired
 
       return {
         ...sub,
@@ -578,12 +581,14 @@ export async function deleteSubdomain(req: AuthenticatedRequest, res: Response) 
   }
 
   try {
+    const whereClause: any = { id: BigInt(subdomainId), deletedAt: null };
+    if (req.user?.role !== 'Admin') {
+      whereClause.userId = BigInt(userId);
+    }
+
     const subdomain = await prisma.subdomain.findFirst({
-      where: {
-        id: BigInt(subdomainId),
-        userId: BigInt(userId),
-        deletedAt: null
-      }
+      where: whereClause,
+      include: { databases: true }
     });
 
     if (!subdomain) {
@@ -593,7 +598,42 @@ export async function deleteSubdomain(req: AuthenticatedRequest, res: Response) 
       });
     }
 
-    // Soft-delete subdomain
+    // 1. Hapus folder fisik (docRoot)
+    try {
+      const baseDir = getBaseDirectory(subdomain.docRoot);
+      if (fs.existsSync(baseDir)) {
+        fs.rmSync(baseDir, { recursive: true, force: true });
+      }
+    } catch (fsErr: any) {
+      console.warn(`[deleteSubdomain] Warning: Gagal menghapus folder fisik: ${fsErr.message}`);
+    }
+
+    // 2. Hapus database & user cPanel
+    for (const db of subdomain.databases) {
+      try {
+        await callCpanelApi('Mysql', 'delete_database', { name: db.dbName });
+      } catch (err: any) {
+        console.warn(`[deleteSubdomain] Warning: Gagal menghapus database ${db.dbName}: ${err.message}`);
+      }
+      try {
+        await callCpanelApi('Mysql', 'delete_user', { name: db.dbUser });
+      } catch (err: any) {
+        console.warn(`[deleteSubdomain] Warning: Gagal menghapus user database ${db.dbUser}: ${err.message}`);
+      }
+    }
+
+    // 3. Hapus cPanel Subdomain entry
+    try {
+      const rootDomain = await getRootDomain();
+      await callCpanelApi('SubDomain', 'delsubdomain', {
+        domain: subdomain.name,
+        rootdomain: rootDomain
+      });
+    } catch (cpErr: any) {
+      console.warn(`[deleteSubdomain] Warning: Gagal menghapus subdomain cPanel: ${cpErr.message}`);
+    }
+
+    // 4. Tandai deletedAt di database
     await prisma.subdomain.update({
       where: { id: subdomain.id },
       data: {
@@ -604,7 +644,7 @@ export async function deleteSubdomain(req: AuthenticatedRequest, res: Response) 
 
     return res.status(200).json({
       success: true,
-      message: 'Subdomain berhasil dihapus.'
+      message: 'Subdomain, berkas fisik, dan akun database berhasil dihapus.'
     });
   } catch (error: any) {
     return res.status(500).json({

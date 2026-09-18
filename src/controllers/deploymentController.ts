@@ -271,15 +271,15 @@ export async function triggerSubdomainDeploy(req: AuthenticatedRequest, res: Res
           zipSize: lastDeployment?.zipSize || BigInt(0),
           extractedSize: lastDeployment?.extractedSize || BigInt(0),
           version: nextVersion,
-          status: 'queued', // Menunggu persetujuan admin
+          status: 'success', // Langsung aktif
           notes: `Manual Redeploy (ZIP) v${nextVersion}`,
-          deployedAt: null // Di-set ketika disetujui oleh admin
+          deployedAt: new Date()
         }
       });
 
       return res.status(200).json({
         success: true,
-        message: 'Redeploy manual berhasil diajukan dan menunggu persetujuan.',
+        message: 'Redeploy manual berhasil diproses.',
         data: serializeBigInt(deployment)
       });
     }
@@ -290,12 +290,12 @@ export async function triggerSubdomainDeploy(req: AuthenticatedRequest, res: Res
       gitUrl: subdomain.gitUrl,
       branch: subdomain.gitBranch || 'main',
       token: decryptedToken,
-      notes: `Manual Git Redeploy - Branch: ${subdomain.gitBranch}`
+      notes: `Git Deploy - Branch: ${subdomain.gitBranch}`
     });
 
     return res.status(200).json({
       success: true,
-      message: 'Redeploy manual dari Git berhasil diajukan dan menunggu persetujuan.',
+      message: 'Pull dari Git berhasil diproses.',
       data: serializeBigInt(deployment)
     });
 

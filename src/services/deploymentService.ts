@@ -180,9 +180,9 @@ export async function validateAndDeployZip(params: {
         zipSize: BigInt(zipStat.size),
         extractedSize: BigInt(totalExtractedSize),
         version: nextVersion,
-        status: 'queued', // Awalnya berstatus queued (menunggu approval admin)
+        status: 'success', // Langsung aktif tanpa persetujuan admin
         notes: notes || `Deployment version ${nextVersion}`,
-        deployedAt: null // Belum secara resmi dideploy sampai di-approve
+        deployedAt: new Date()
       }
     });
  

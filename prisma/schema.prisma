@@ -115,8 +115,20 @@ model Subdomain {
   databases         UserDatabase[]
   deployments       Deployment[]
   payments          Payment[]
+  fileLogs          FileLog[]
 
   @@map("subdomains")
+}
+
+model FileLog {
+  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  subdomainId BigInt    @map("subdomain_id") @db.UnsignedBigInt
+  subdomain   Subdomain @relation(fields: [subdomainId], references: [id], onDelete: Cascade)
+  filePath    String    @map("file_path") @db.VarChar(255)
+  logMessage  String    @map("log_message") @db.Text
+  createdAt   DateTime? @default(now()) @map("created_at")
+
+  @@map("file_logs")
 }
 
 model SubdomainEnv {

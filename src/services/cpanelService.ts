@@ -100,12 +100,27 @@ export async function callCpanelApi(
   // 1. Cobalah via HTTP API cPanel
   if (apiKey && apiUrl) {
     try {
-      const response = await axios.get(`${apiUrl}/execute/${module}/${func}`, {
-        params,
-        headers: { Authorization: `cpanel ${cpanelUser}:${apiKey}` },
-        timeout: 10000
-      });
-      if (response.data && (response.data.status === 1 || response.data.cpanelresult?.data?.result === 1)) {
+      let response;
+      if (isApi2) {
+        response = await axios.get(`${apiUrl}/json-api/cpanel`, {
+          params: {
+            cpanel_jsonapi_user: cpanelUser,
+            cpanel_jsonapi_apiversion: '2',
+            cpanel_jsonapi_module: module,
+            cpanel_jsonapi_func: func,
+            ...params
+          },
+          headers: { Authorization: `cpanel ${cpanelUser}:${apiKey}` },
+          timeout: 10000
+        });
+      } else {
+        response = await axios.get(`${apiUrl}/execute/${module}/${func}`, {
+          params,
+          headers: { Authorization: `cpanel ${cpanelUser}:${apiKey}` },
+          timeout: 10000
+        });
+      }
+      if (response.data && (response.data.status === 1 || response.data.cpanelresult?.data?.result === 1 || response.data.cpanelresult?.event?.result === 1)) {
         return response.data;
       }
     } catch (error: any) {

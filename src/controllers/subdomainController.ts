@@ -305,8 +305,7 @@ export async function claimSubdomain(req: AuthenticatedRequest, res: Response) {
     });
 
     // 5. Jalankan provisioning di server cPanel (Subdomain, DB, User, Hak Akses, index.html)
-    // Jika di Windows lokal, cpanelService otomatis menyimulasikan panggilan sukses ini
-    await provisionSubdomain({
+    const provisionReport = await provisionSubdomain({
       subdomainName: name,
       docRoot,
       dbName,
@@ -315,17 +314,25 @@ export async function claimSubdomain(req: AuthenticatedRequest, res: Response) {
       rootDomain
     });
 
+    let message = 'Subdomain berhasil diklaim dan diaktifkan.';
+    if (!provisionReport.databaseCreated) {
+      message = 'Subdomain berhasil dibuat di cPanel, namun alokasi database MySQL di cPanel mengalami kendala (misal kuota database cPanel penuh). Silakan cek tab Database atau hubungi Admin.';
+    }
+
     return res.status(201).json({
       success: true,
-      message: 'Subdomain berhasil diklaim dan di-provision.',
+      message,
       data: serializeBigInt({
         subdomain: result.newSubdomain,
         database: {
           id: result.userDatabase.id,
           dbName: result.userDatabase.dbName,
           dbUser: result.userDatabase.dbUser,
-          dbPasswordPlain: dbPassPlain // Tampilkan password plain sekali saja saat berhasil klaim
-        }
+          dbPasswordPlain: dbPassPlain,
+          isReady: provisionReport.databaseCreated,
+          error: provisionReport.errors.length > 0 ? provisionReport.errors.join('; ') : null
+        },
+        provisioning: provisionReport
       })
     });
 
@@ -612,11 +619,13 @@ export async function deleteSubdomain(req: AuthenticatedRequest, res: Response) 
     for (const db of subdomain.databases) {
       try {
         await callCpanelApi('Mysql', 'delete_database', { name: db.dbName });
+        console.log(`[deleteSubdomain] Database cPanel '${db.dbName}' berhasil dihapus.`);
       } catch (err: any) {
         console.warn(`[deleteSubdomain] Warning: Gagal menghapus database ${db.dbName}: ${err.message}`);
       }
       try {
         await callCpanelApi('Mysql', 'delete_user', { name: db.dbUser });
+        console.log(`[deleteSubdomain] User MySQL cPanel '${db.dbUser}' berhasil dihapus.`);
       } catch (err: any) {
         console.warn(`[deleteSubdomain] Warning: Gagal menghapus user database ${db.dbUser}: ${err.message}`);
       }
@@ -625,15 +634,30 @@ export async function deleteSubdomain(req: AuthenticatedRequest, res: Response) 
     // 3. Hapus cPanel Subdomain entry
     try {
       const rootDomain = await getRootDomain();
-      await callCpanelApi('SubDomain', 'delsubdomain', {
-        domain: subdomain.name,
-        rootdomain: rootDomain
-      });
+      // cPanel API 2 format: 'subdomain_rootdomain' atau 'subdomain.rootdomain'
+      try {
+        await callCpanelApi('SubDomain', 'delsubdomain', {
+          domain: `${subdomain.name}_${rootDomain}`
+        });
+        console.log(`[deleteSubdomain] Subdomain cPanel '${subdomain.name}_${rootDomain}' berhasil dihapus.`);
+      } catch (errUnderscore: any) {
+        try {
+          await callCpanelApi('SubDomain', 'delsubdomain', {
+            domain: `${subdomain.name}.${rootDomain}`
+          });
+          console.log(`[deleteSubdomain] Subdomain cPanel '${subdomain.name}.${rootDomain}' berhasil dihapus via fallback dot.`);
+        } catch (errDot: any) {
+          await callCpanelApi('SubDomain', 'delsubdomain', {
+            domain: subdomain.name,
+            rootdomain: rootDomain
+          });
+        }
+      }
     } catch (cpErr: any) {
       console.warn(`[deleteSubdomain] Warning: Gagal menghapus subdomain cPanel: ${cpErr.message}`);
     }
 
-    // 4. Tandai deletedAt di database
+    // 4. Tandai deletedAt di database (subdomain & user databases)
     await prisma.subdomain.update({
       where: { id: subdomain.id },
       data: {
@@ -642,9 +666,16 @@ export async function deleteSubdomain(req: AuthenticatedRequest, res: Response) 
       }
     });
 
+    await prisma.userDatabase.updateMany({
+      where: { subdomainId: subdomain.id },
+      data: {
+        deletedAt: new Date()
+      }
+    });
+
     return res.status(200).json({
       success: true,
-      message: 'Subdomain, berkas fisik, dan akun database berhasil dihapus.'
+      message: 'Subdomain, berkas fisik, dan akun database berhasil dihapus secara menyeluruh.'
     });
   } catch (error: any) {
     return res.status(500).json({
